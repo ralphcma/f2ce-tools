@@ -1,12 +1,18 @@
 # F2CE module API v1 architecture
 
-Status: upstream-adoption candidate on `feature/module-api-v1`. The API version is `1.0.0`; the implementation build is `1.0.0-candidate.1`.
+Status: upstream-adoption candidate on `feature/module-api-v1`. The API version is `1.0.0`; the implementation build is `1.0.0-candidate.2`.
 
 The public boundary is one namespace, `F2CE.API.v1`. Existing `f2t_*` functions and `F2T_*` state remain unchanged for backwards compatibility, but new modules should never read, replace, or retain them. `src/scripts/api/adapter.lua` is the only compatibility boundary that reads those implementation globals.
 
-The design has five layers:
+## Boundary with Muxlet
 
-1. Module registry and scoped contexts own aliases, triggers, internal and Mudlet event handlers, timers, HTTP handles, widgets, and arbitrary cleanup tokens. Lifecycle transitions are register → initialize → enable → disable/unload → unregister. Disable, unload, reconnect, and API reload revoke active work before callbacks can transmit commands.
+Muxlet remains the supported owner of visual content, panes, tabs, and saved workspace layouts. Third-party packages should register those elements directly with `Mux.registerContent`; `F2CE.API.v1` deliberately provides no widget or workspace wrapper.
+
+The API is limited to F2CE gameplay services that Muxlet does not provide: navigation ownership, command coordination, copied game state, price-provider extension, hauling control, and map queries. Its event stream reports only those service changes. Packages continue using Mudlet for their own aliases, triggers, timers, HTTP, and general client events, and may attach any such resource to `context:own(...)` when they want F2CE lifecycle cleanup.
+
+The service design has five layers:
+
+1. A small module registry gives service leases and providers a stable owner. Scoped contexts own F2CE API subscriptions and explicit cleanup tokens only. Lifecycle transitions are register → initialize → enable → disable/unload → unregister. Disable, unload, reconnect, and API reload revoke active work before callbacks can transmit commands.
 2. Navigation serializes F2CE speedwalking behind an atomic lease and returns an opaque request handle. Completion, failure, pause, resume, graceful/immediate cancellation, and interruption reasons are normalized without exposing `F2T_SPEEDWALK_*` or `F2T_MAP_EXPLORE_STATE`.
 3. The command broker allows one enabled module to hold a command lease. Every send requires a non-empty audit reason. Arbitrary command leases and navigation leases are mutually exclusive. Long-running hauling and serialized price requests acquire service command leases internally.
 4. Data and map services deep-copy results. GMCP channels are normalized to stable names; callers can mutate their copy without changing F2CE or Mudlet state. Mapper queries return copied arrays/records, never live mapper tables.
@@ -31,4 +37,4 @@ The design has five layers:
 
 For the first official release, retain the adapter boundary so behavior is reviewable. A later internal refactor can replace its polling/snapshot reads with direct calls from map, hauling, and commodity state transitions while leaving `F2CE.API.v1` unchanged. The API folder must load as a package script group; the adapter uses a zero-delay installation so all native F2CE functions exist regardless of muddler folder ordering.
 
-No new license was selected. The fork retains the upstream MIT license (`Copyright (c) 2025 ping65510`). Source-owner review is required for API naming, event naming, the v1 stability commitment, whether the first release should be 3.3.0 or 4.0.0, and which internal transition points should replace the compatibility polling hooks.
+No new license was selected. The fork retains the upstream MIT license (`Copyright (c) 2025 ping65510`). Source-owner review is required for API naming, service-event naming, the v1 stability commitment, the first release number, and which internal transition points should replace the compatibility polling hooks.

@@ -69,17 +69,9 @@ function adapter.cancelTimer(id)
     if id and type(killTimer) == "function" then pcall(killTimer, id) end
 end
 
-function adapter.alias(pattern, callback)
-    if type(tempAlias) ~= "function" then return nil end
-    return tempAlias(pattern, callback)
+function adapter.muxletContentAvailable()
+    return type(Mux) == "table" and type(Mux.registerContent) == "function"
 end
-function adapter.cancelAlias(id) if id and type(killAlias) == "function" then pcall(killAlias, id) end end
-
-function adapter.trigger(pattern, callback)
-    if type(tempRegexTrigger) ~= "function" then return nil end
-    return tempRegexTrigger(pattern, callback)
-end
-function adapter.cancelTrigger(id) if id and type(killTrigger) == "function" then pcall(killTrigger, id) end end
 
 function adapter.sendCommand(command, options)
     if type(send) ~= "function" then return false end

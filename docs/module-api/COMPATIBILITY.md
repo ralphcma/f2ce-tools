@@ -19,5 +19,4 @@ Legacy `f2t_*` and `F2T_*` names are not removed or changed in API v1. They are 
 5. `F2CE.API.v1` behavior and schemas receive additive compatible changes only. Breaking changes require `F2CE.API.v2`; v1 remains available through the same deprecation window.
 6. Internal globals may continue changing without notice once official bundled modules and documented consumers have migrated behind the API.
 
-Known 3.2.5 adapter limitations: native navigation exposes no direct completion event, so the compatibility adapter observes copied speedwalk status on room events; graceful navigation cancel stops at the next API tick; built-in price cancellation cannot abort a command already transmitted; HTTP and generic widget construction are unavailable unless a future native adapter supplies them; mapper `getPath` updates Mudlet's internal planned path before the adapter copies it.
-
+Known 3.2.5 adapter limitations: native navigation exposes no direct completion event, so the compatibility adapter observes copied speedwalk status on room events; graceful navigation cancel stops at the next API tick; built-in price cancellation cannot abort a command already transmitted; mapper `getPath` updates Mudlet's internal planned path before the adapter copies it.

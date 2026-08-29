@@ -13,6 +13,25 @@ local spec = {
     },
 }
 
+local function startMarketTrip(context)
+    local lease, lease_error = API.navigation.acquire(context, { purpose = "example market trip" })
+    if not lease then print("[example] " .. tostring(lease_error)); return end
+
+    local request, request_error = lease:request("Sol exchange", {
+        suppress_hint = true,
+        on_complete = function(result)
+            print("[example] arrived: " .. tostring(result.destination))
+        end,
+        on_failure = function(result)
+            print("[example] failed: " .. tostring(result.reason))
+        end,
+        on_interrupt = function(result)
+            if result.interruption_reason == "customs" then return { auto_resume = true } end
+        end,
+    })
+    if not request then lease:release("start_failed"); print("[example] " .. tostring(request_error)) end
+end
+
 function spec.initialize(context)
     context:on("data.room", function(event)
         if event.available then
@@ -25,31 +44,16 @@ function spec.initialize(context)
         print("[example] navigation interrupted: " .. tostring(event.interruption_reason))
     end)
 
-    context:alias("^example market$", function()
-        local lease, lease_error = API.navigation.acquire(context, { purpose = "example market trip" })
-        if not lease then print("[example] " .. tostring(lease_error)); return end
-
-        local request, request_error = lease:request("Sol exchange", {
-            suppress_hint = true,
-            on_complete = function(result)
-                print("[example] arrived: " .. tostring(result.destination))
-            end,
-            on_failure = function(result)
-                print("[example] failed: " .. tostring(result.reason))
-            end,
-            on_interrupt = function(result)
-                -- A module can opt into F2CE's supported customs auto-resume.
-                if result.interruption_reason == "customs" then return { auto_resume = true } end
-            end,
-        })
-        if not request then lease:release("start_failed"); print("[example] " .. tostring(request_error)) end
-    end)
+    -- Host resources stay with their native owner. This alias uses Mudlet
+    -- directly and gives the scoped context only its cleanup token.
+    local alias_id = tempAlias("^example market$", function() startMarketTrip(context) end)
+    context:own("mudlet_alias", alias_id, function(id) killAlias(id) end)
 end
 
 function spec.disable(context, reason)
     print("[example] disabled: " .. tostring(reason))
-    -- No manual resource deletion is needed. The scoped context owns the alias,
-    -- event subscriptions, navigation handles, and every cleanup token.
+    -- Muxlet owns any visual content registered by this package. The F2CE
+    -- context owns only F2CE service subscriptions/leases and explicit cleanup.
 end
 
 function spec.unload(context, reason)
@@ -58,4 +62,3 @@ end
 
 local context, err = API.modules.reload(spec)
 if not context then error(tostring(err)) end
-

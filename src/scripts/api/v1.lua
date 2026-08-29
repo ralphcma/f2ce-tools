@@ -6,12 +6,12 @@ F2CE = type(F2CE) == "table" and F2CE or {}
 F2CE.API = type(F2CE.API) == "table" and F2CE.API or {}
 
 local existing = F2CE.API.v1
-if type(existing) == "table" and existing._build == "1.0.0-candidate.1" then
+if type(existing) == "table" and type(existing._reload) == "function" then
     existing:_reload()
 end
 
 local API = {
-    _build = "1.0.0-candidate.1",
+    _build = "1.0.0-candidate.2",
     version = "1.0.0",
     f2ce_version = "unknown",
     capabilities = {},
@@ -22,6 +22,15 @@ local API = {
     _next_id = 0,
 }
 F2CE.API.v1 = API
+
+API.integration = {
+    scope = "F2CE gameplay services",
+    ui = {
+        provider = "Muxlet",
+        registration = "Mux.registerContent",
+        note = "Register visual content and workspace layouts directly with Muxlet.",
+    },
+}
 
 local unpack_values = table.unpack or unpack
 
@@ -144,11 +153,17 @@ local function capability(name, available, detail)
 end
 
 function API.hasCapability(name)
+    if name == "muxlet.content" and API._adapter and API._adapter.muxletContentAvailable then
+        API.capabilities[name] = API.capabilities[name] or {}
+        API.capabilities[name].available = API._adapter.muxletContentAvailable() == true
+        API.capabilities[name].detail = "UI content belongs in Mux.registerContent"
+    end
     local item = API.capabilities[name]
     return item ~= nil and item.available == true
 end
 
 function API.getCapabilities()
+    API.hasCapability("muxlet.content")
     return readonly_copy(API.capabilities)
 end
 
@@ -207,53 +222,6 @@ function Context:on(event_name, callback)
     if not token then return nil, err end
     self._resources[#self._resources + 1] = token
     return token
-end
-
-function Context:onMudlet(event_name, callback)
-    if not API._adapter or type(API._adapter.registerEvent) ~= "function" then
-        return nil, api_error("E_CAPABILITY", "Mudlet event registration is unavailable")
-    end
-    local id, err = API._adapter.registerEvent(event_name, self:_guard(callback, self.module_id .. " Mudlet event " .. event_name))
-    if not id then return nil, err or api_error("E_RESOURCE", "could not register Mudlet event") end
-    return self:own("event_handler", id, API._adapter.unregisterEvent)
-end
-
-function Context:timer(delay, callback, repeating)
-    if not API._adapter or type(API._adapter.timer) ~= "function" then
-        return nil, api_error("E_CAPABILITY", "timer registration is unavailable")
-    end
-    local id = API._adapter.timer(delay, self:_guard(callback, self.module_id .. " timer"), repeating)
-    if not id then return nil, api_error("E_RESOURCE", "could not create timer") end
-    return self:own("timer", id, API._adapter.cancelTimer)
-end
-
-function Context:alias(pattern, callback)
-    if not API._adapter or type(API._adapter.alias) ~= "function" then return nil, api_error("E_CAPABILITY", "aliases unavailable") end
-    local id = API._adapter.alias(pattern, self:_guard(callback, self.module_id .. " alias"))
-    if not id then return nil, api_error("E_RESOURCE", "could not create alias") end
-    return self:own("alias", id, API._adapter.cancelAlias)
-end
-
-function Context:trigger(pattern, callback)
-    if not API._adapter or type(API._adapter.trigger) ~= "function" then return nil, api_error("E_CAPABILITY", "triggers unavailable") end
-    local id = API._adapter.trigger(pattern, self:_guard(callback, self.module_id .. " trigger"))
-    if not id then return nil, api_error("E_RESOURCE", "could not create trigger") end
-    return self:own("trigger", id, API._adapter.cancelTrigger)
-end
-
-function Context:http(request, callback)
-    if not API._adapter or type(API._adapter.http) ~= "function" then return nil, api_error("E_CAPABILITY", "HTTP unavailable") end
-    local id, cancel = API._adapter.http(readonly_copy(request), self:_guard(callback, self.module_id .. " HTTP"))
-    if not id then return nil, api_error("E_RESOURCE", "could not start HTTP request") end
-    return self:own("http", id, cancel or API._adapter.cancelHttp)
-end
-
-function Context:widget(spec)
-    if not API._adapter or type(API._adapter.widget) ~= "function" then return nil, api_error("E_CAPABILITY", "widgets unavailable") end
-    local widget, cleanup = API._adapter.widget(readonly_copy(spec))
-    if not widget then return nil, api_error("E_RESOURCE", "could not create widget") end
-    self:own("widget", widget, cleanup or API._adapter.destroyWidget)
-    return widget
 end
 
 function Context:cleanup(reason)
@@ -802,11 +770,8 @@ function API._install(adapter)
     capability("hauling", type(adapter.haulingStart) == "function", adapter.name)
     capability("hauling.exchange_override", type(adapter.haulingStart) == "function", adapter.name)
     capability("map.queries", type(adapter.mapResolve) == "function", adapter.name)
-    capability("resources.aliases", type(adapter.alias) == "function", adapter.name)
-    capability("resources.triggers", type(adapter.trigger) == "function", adapter.name)
-    capability("resources.timers", type(adapter.timer) == "function", adapter.name)
-    capability("resources.http", type(adapter.http) == "function", adapter.name)
-    capability("resources.widgets", type(adapter.widget) == "function", adapter.name)
+    capability("muxlet.content", adapter.muxletContentAvailable and adapter.muxletContentAvailable() or false,
+        "UI content belongs in Mux.registerContent")
     if adapter.registerEvent then
         local bindings = {
             ["gmcp.room.info"] = { "room", navigation._tick }, ["gmcp.char.vitals"] = { "vitals" },
@@ -831,7 +796,14 @@ function API._install(adapter)
 end
 
 function API.info()
-    return { api_version = API.version, api_build = API._build, f2ce_version = API.f2ce_version, adapter = API._adapter and API._adapter.name or nil, capabilities = API.getCapabilities() }
+    return {
+        api_version = API.version,
+        api_build = API._build,
+        f2ce_version = API.f2ce_version,
+        adapter = API._adapter and API._adapter.name or nil,
+        capabilities = API.getCapabilities(),
+        integration = readonly_copy(API.integration),
+    }
 end
 
 function API._reconnectReset(reason)

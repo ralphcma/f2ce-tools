@@ -6,20 +6,25 @@ All data returned across the API boundary is copied. Errors are tables with `cod
 
 - `API.version`: semantic API version (`1.0.0`).
 - `API.f2ce_version`: installed F2CE package version.
-- `API.info()`: copied API/F2CE/adapter/capability record.
+- `API.info()`: copied API/F2CE/adapter/capability/integration record.
 - `API.hasCapability(name)`, `API.getCapabilities()`, `API.requireCapabilities(names)`.
 - `API.validateDependency({api=">=1.0.0", f2ce=">=3.2.5", capabilities={...}})`.
 - `API.versions.compare(a,b)` and `API.versions.satisfies(actual, requirement)`; operators are `=`, `>`, `>=`, `<`, `<=`, and `~` (same major/minor, at least the requested patch).
 
-Capabilities include `modules`, `events`, `navigation`, `commands`, `gmcp.snapshots`, `prices.providers`, `hauling`, `hauling.exchange_override`, `map.queries`, and the available `resources.*` entries.
+Capabilities include `modules`, `events`, `navigation`, `commands`, `gmcp.snapshots`, `prices.providers`, `hauling`, `hauling.exchange_override`, `map.queries`, and `muxlet.content` when `Mux.registerContent` is available.
+
+`API.integration` identifies this API's scope as F2CE gameplay services and identifies Muxlet as the UI/content provider. Visual integrations should call `Mux.registerContent` directly; this API does not wrap Muxlet.
 
 ## Modules and scoped context
 
 - `API.modules.register(spec)` where `spec.id` is a lowercase dotted ID and `spec` may define `version`, `requires`, `initialize(context)`, `enable(context)`, `disable(context,reason)`, and `unload(context,reason)`.
 - `initialize(id)`, `enable(id)`, `disable(id,reason)`, `unload(id,reason)`, `unregister(id,reason)`, `reload(spec)`, and `status(id)`.
-- `context:on(api_event, callback)`, `onMudlet(event,callback)`, `timer(delay,callback,repeating)`, `alias(regex,callback)`, `trigger(regex,callback)`, `http(request,callback)`, `widget(spec)`, and `own(kind,resource,cleanup)`.
+- `context:on(api_event,callback)` subscribes to F2CE API service events.
+- `context:own(kind,resource,cleanup)` attaches an explicit cleanup token for a resource created through Mudlet, Muxlet, or another library.
 
 Callbacks registered through a context are gated on the current enabled generation. Cleanup is reverse-order and idempotent.
+
+The context does not create aliases, triggers, timers, HTTP requests, widgets, or general Mudlet event handlers. Those remain with their native owner. For example, a package can create an alias with `tempAlias` and attach its ID using `context:own("mudlet_alias", id, killAlias)`.
 
 ## Navigation
 
@@ -77,4 +82,3 @@ Events: `hauling.started`, `hauling.state`, and `hauling.stopped`. Status copies
 ## Reconnect and schema discovery
 
 `reconnect.reset` is emitted after leases/active work are revoked and caches cleared. `API.schemas` documents required fields for `module.state`, `navigation.*`, `hauling.*`, `provider.*`, `command.acknowledged`, `data.*`, and `reconnect.reset`.
-

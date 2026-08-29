@@ -22,10 +22,7 @@ local function reset()
         unregisterEvent = function(...) return mock:unregisterEvent(...) end,
         timer = function(...) return mock:timer(...) end,
         cancelTimer = function(...) return mock:cancelTimer(...) end,
-        alias = function(...) return mock:alias(...) end,
-        cancelAlias = function(...) return mock:cancelAlias(...) end,
-        trigger = function(...) return mock:trigger(...) end,
-        cancelTrigger = function(...) return mock:cancelTrigger(...) end,
+        muxletContentAvailable = function(...) return mock:muxletContentAvailable(...) end,
         sendCommand = function(...) return mock:sendCommand(...) end,
         gmcpSnapshot = function(...) return mock:gmcpSnapshot(...) end,
         navSetOwner = function(...) return mock:navSetOwner(...) end,
@@ -61,6 +58,8 @@ end
 local tests = {}
 function tests.version_and_capability_failure()
     reset()
+    equal(API.integration.ui.provider, "Muxlet")
+    truthy(not API.hasCapability("muxlet.content"))
     truthy(API.versions.satisfies("1.2.3", ">=1.0.0")); truthy(not API.versions.satisfies("1.2.3", ">=2.0.0"))
     local ok, err = API.validateDependency({ api = ">=2.0.0" }); equal(ok, nil); code(err, "E_API_VERSION")
     API.capabilities["test.missing"] = { available = false }
@@ -80,10 +79,10 @@ function tests.reload_idempotence()
 end
 
 function tests.scoped_cleanup()
-    reset(); local context = enabled("test.resources")
-    assert(context:alias("^x$", function() end)); assert(context:trigger("^y$", function() end)); assert(context:timer(1, function() end))
+    reset(); local context = enabled("test.resources"); local cleanups = 0
+    assert(context:own("host_resource", "resource-id", function() cleanups = cleanups + 1 end))
     assert(context:on("test.event", function() end)); API.modules.disable("test.resources")
-    equal(mock.cancelled.aliases, 1); equal(mock.cancelled.triggers, 1); equal(mock.cancelled.timers, 1)
+    equal(cleanups, 1)
 end
 
 function tests.navigation_contention_and_callbacks()

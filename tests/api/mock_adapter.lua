@@ -4,8 +4,8 @@ Mock.__index = Mock
 function Mock.new()
     local self = setmetatable({}, Mock)
     self.name = "offline-mock"
-    self.events, self.timers, self.aliases, self.triggers = {}, {}, {}, {}
-    self.cancelled = { events = 0, timers = 0, aliases = 0, triggers = 0 }
+    self.events, self.timers = {}, {}
+    self.cancelled = { events = 0, timers = 0 }
     self.sent, self.next_id = {}, 0
     self.gmcp = {}
     self.nav = { active = false, paused = false, result = nil }
@@ -54,10 +54,7 @@ function Mock:runTimers()
     end
 end
 
-function Mock:alias(pattern, callback) local id = self:_id("alias"); self.aliases[id] = { pattern, callback }; return id end
-function Mock:cancelAlias(id) if self.aliases[id] then self.aliases[id] = nil; self.cancelled.aliases = self.cancelled.aliases + 1 end end
-function Mock:trigger(pattern, callback) local id = self:_id("trigger"); self.triggers[id] = { pattern, callback }; return id end
-function Mock:cancelTrigger(id) if self.triggers[id] then self.triggers[id] = nil; self.cancelled.triggers = self.cancelled.triggers + 1 end end
+function Mock:muxletContentAvailable() return false end
 
 function Mock:sendCommand(command, options)
     self.sent[#self.sent + 1] = { command = command, options = options }
@@ -118,4 +115,3 @@ function Mock:mapSystems() return { { name = "Sol" } } end
 function Mock:mapReachability(from_room, to_room) return { reachable = from_room ~= to_room, rooms = { to_room }, directions = { "n" } } end
 
 return Mock
-
