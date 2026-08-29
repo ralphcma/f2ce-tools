@@ -2,6 +2,8 @@
 
 A Mudlet package for [Federation 2 Community Edition](https://federation2.com) — mapping, navigation, automated trading, factory management, planet-owner tools, and quality-of-life automation, with an optional [Muxlet](https://github.com/tmtocloud/Muxlet)-based GUI.
 
+Independent package authors should integrate through the versioned `F2CE.API.v1` boundary instead of reading or replacing `F2T_*`/`f2t_*` implementation globals. See the [module API architecture](docs/module-api/ARCHITECTURE.md), [reference](docs/module-api/API_REFERENCE.md), and [example module](examples/module_api_v1/example_module.lua).
+
 ![F2CE-Tools Muxlet GUI](screenshot.png)
 
 ## Installation
