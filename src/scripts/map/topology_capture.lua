@@ -11,6 +11,32 @@
 
 F2T_MAP_TOPOLOGY_CAPTURE = F2T_MAP_TOPOLOGY_CAPTURE or {active = false}
 
+local function f2t_map_topology_automatic_allowed()
+    if F2T_MAP_ENABLED ~= true then return false, "mapping disabled" end
+    if type(f2t_settings_get) ~= "function"
+        or not f2t_settings_get("map", "topology_auto_sync") then
+        return false, "topology auto-sync disabled"
+    end
+
+    local connected = F2T_CONNECTED
+    if type(f2t_check_connection) == "function" then
+        connected = f2t_check_connection()
+    end
+    if not connected then return false, "disconnected" end
+    return true
+end
+
+function f2t_map_topology_capture_cancel(reason)
+    local capture = F2T_MAP_TOPOLOGY_CAPTURE
+    if not capture.active then return false end
+
+    f2t_capture_close("topology")
+    F2T_MAP_TOPOLOGY_CAPTURE = {active = false}
+    f2t_debug_log("[map/topology] Sync cancelled: %s", tostring(reason or "cancelled"))
+    if capture.callback then capture.callback(false) end
+    return true
+end
+
 -- opts.silent suppresses every console message this sync would print (used by
 -- the once-per-login startup sync in map/events.lua). Debug logging and the
 -- callback are unaffected; the game replies are swallowed by the capture
@@ -18,11 +44,20 @@ F2T_MAP_TOPOLOGY_CAPTURE = F2T_MAP_TOPOLOGY_CAPTURE or {active = false}
 function f2t_map_topology_sync(callback, opts)
     opts = opts or {}
     local silent = opts.silent and true or false
+    local automatic = opts.automatic and true or false
     if F2T_MAP_TOPOLOGY_CAPTURE.active then
         if not silent then
             cecho("\n<yellow>[map]<reset> Topology sync already in progress\n")
         end
         return false
+    end
+    if automatic then
+        local allowed, reason = f2t_map_topology_automatic_allowed()
+        if not allowed then
+            f2t_debug_log("[map/topology] Automatic sync skipped: %s", tostring(reason))
+            if callback then callback(false) end
+            return false
+        end
     end
     f2t_capture_close("topology")
     F2T_MAP_TOPOLOGY_CAPTURE = {
@@ -34,6 +69,7 @@ function f2t_map_topology_sync(callback, opts)
         seen_start = false,
         callback = callback,
         silent = silent,
+        automatic = automatic,
     }
     f2t_debug_log("[map/topology] Sync started: capturing display cartels (silent=%s)", tostring(silent))
     send("display cartels", false)
@@ -51,6 +87,13 @@ end
 
 function f2t_map_topology_capture_phase_complete()
     local capture = F2T_MAP_TOPOLOGY_CAPTURE
+    if capture.automatic then
+        local allowed, reason = f2t_map_topology_automatic_allowed()
+        if not allowed then
+            f2t_map_topology_capture_cancel(reason)
+            return
+        end
+    end
     if capture.phase == "cartels" then
         capture.phase = "syndicates"
         capture.seen_start = false

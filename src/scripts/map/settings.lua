@@ -87,7 +87,7 @@ f2t_settings_register("map", "movement_keys", {
 
 f2t_settings_register("map", "topology_auto_sync", {
     label       = "Topology auto-sync",
-    description = "Automatically run 'display cartels'/'display syndicates' when the jump model proves stale",
+    description = "Automatically refresh cartel/syndicate topology after login and when the jump model proves stale",
     default     = true,
 })
 
