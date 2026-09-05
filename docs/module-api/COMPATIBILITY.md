@@ -1,8 +1,8 @@
-# F2CE 3.2.5 compatibility and deprecation policy
+# F2CE 3.3.0 compatibility and deprecation policy
 
-The native adapter was checked against the installed 3.2.5 package behavior and the upstream `v3.2.5` tag. It preserves all existing globals and functions and uses these established contracts internally:
+The native adapter is aligned with the upstream `v3.3.0` source and preserves all existing globals and functions. New modules should require F2CE-Tools 3.3.0 or newer. The adapter uses these established contracts internally:
 
-- navigation: `f2t_map_navigate`, owner set/clear, pause/resume/stop, and the speedwalk status globals;
+- navigation: `f2t_map_navigate` statuses (`walking`, `arrived`, `pending`, and `failed`), its `on_result(ok,status)` callback, compare-and-release ownership around the native owner set/clear functions, pause/resume/stop, destination re-resolution, and copied speedwalk/exploration status;
 - hauling: rank-aware `f2t_hauling_start(nil)`, supported `f2t_hauling_start("exchange")`, pause/resume/graceful stop/immediate terminate, and copied hauling status;
 - pricing: `f2t_price_check_commodity(commodity, callback)` with callback `(commodity,buy_data,sell_data)`;
 - map: location resolution, room flag queries, area tables, galaxy index, and copied `getPath` results;
@@ -19,4 +19,6 @@ Legacy `f2t_*` and `F2T_*` names are not removed or changed in API v1. They are 
 5. `F2CE.API.v1` behavior and schemas receive additive compatible changes only. Breaking changes require `F2CE.API.v2`; v1 remains available through the same deprecation window.
 6. Internal globals may continue changing without notice once official bundled modules and documented consumers have migrated behind the API.
 
-Known 3.2.5 adapter limitations: native navigation exposes no direct completion event, so the compatibility adapter observes copied speedwalk status on room events; graceful navigation cancel stops at the next API tick; built-in price cancellation cannot abort a command already transmitted; mapper `getPath` updates Mudlet's internal planned path before the adapter copies it.
+The adapter retains a best-effort fallback for 3.2.5's older boolean/`nil` navigation result behavior, but that path does not receive the stronger 3.3.0 status contract and is not the recommended module baseline.
+
+Known limitations: a started native speedwalk still has no dedicated completion event, so the adapter observes copied status on room events. Pending 3.3.0 self-healing routes are settled by their status callback or by resolving the requested destination; intermediate speedwalk completion is deliberately ignored. Graceful navigation cancel stops at the next API tick. Built-in price cancellation cannot abort a command already transmitted. The command broker blocks known native automation at acquisition and rechecks immediately before API transmissions, but it cannot prevent a user command or legacy code outside the API from starting afterward. Mapper `getPath` updates Mudlet's internal planned path before the adapter copies it.

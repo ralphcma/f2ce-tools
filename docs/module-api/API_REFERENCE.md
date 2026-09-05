@@ -8,10 +8,10 @@ All data returned across the API boundary is copied. Errors are tables with `cod
 - `API.f2ce_version`: installed F2CE package version.
 - `API.info()`: copied API/F2CE/adapter/capability/integration record.
 - `API.hasCapability(name)`, `API.getCapabilities()`, `API.requireCapabilities(names)`.
-- `API.validateDependency({api=">=1.0.0", f2ce=">=3.2.5", capabilities={...}})`.
+- `API.validateDependency({api=">=1.0.0", f2ce=">=3.3.0", capabilities={...}})`.
 - `API.versions.compare(a,b)` and `API.versions.satisfies(actual, requirement)`; operators are `=`, `>`, `>=`, `<`, `<=`, and `~` (same major/minor, at least the requested patch).
 
-Capabilities include `modules`, `events`, `navigation`, `commands`, `gmcp.snapshots`, `prices.providers`, `hauling`, `hauling.exchange_override`, `map.queries`, and `muxlet.content` when `Mux.registerContent` is available.
+Capabilities include `modules`, `events`, `navigation`, `navigation.status.v33`, `commands`, `commands.native_contention`, `gmcp.snapshots`, `prices.providers`, `hauling`, `hauling.exchange_override`, `map.queries`, and `muxlet.content` when `Mux.registerContent` is available. The two dotted 3.3 capabilities let modules distinguish the explicit navigation-status and native-contention contracts from the legacy fallback.
 
 `API.integration` identifies this API's scope as F2CE gameplay services and identifies Muxlet as the UI/content provider. Visual integrations should call `Mux.registerContent` directly; this API does not wrap Muxlet.
 
@@ -28,7 +28,9 @@ The context does not create aliases, triggers, timers, HTTP requests, widgets, o
 
 ## Navigation
 
-`lease, err = API.navigation.acquire(context, metadata)` atomically acquires the sole navigation lease. `lease:request(destination, options)` returns a handle. Options: `suppress_hint`, `on_complete(result)`, `on_failure(result)`, and `on_interrupt(result)`. Returning `{auto_resume=true}` from the interruption callback requests F2CE's supported customs recovery behavior.
+`lease, err = API.navigation.acquire(context, metadata)` acquires the sole API lease only if no native navigation owner or known native automation is active. `lease:request(destination, options)` returns a handle. Options: `suppress_hint`, `interactive`, `compensate_incomplete_map`, `on_complete(result)`, `on_failure(result)`, and `on_interrupt(result)`. The first three map directly to F2CE-Tools 3.3.0 navigation options. Returning `{auto_resume=true}` from the interruption callback requests F2CE's supported customs recovery behavior.
+
+Request state is normalized from the 3.3.0 native start status: `walking` becomes `running`, `pending` remains `pending`, `arrived` completes immediately, and `failed` is rejected. A pending self-healing route is not completed by an intermediate speedwalk's `LAST_RESULT`; it remains pending until native resolution advances it or the requested destination resolves to the current room. Releasing a lease clears the native owner only when the API's owner token still matches.
 
 Handle functions: `status()`, `pause()`, `resume()`, `cancel(reason)` (graceful, finalized on the next service tick), and `cancelImmediate(reason)`. `lease:release(reason)` is allowed only when no request is active. `API.navigation.status()` returns `{state="idle"}` or a copied request record.
 
@@ -36,7 +38,7 @@ Events: `navigation.lease_acquired`, `.lease_released`, `.started`, `.paused`, `
 
 ## Commands
 
-`lease = API.commands.acquire(context, metadata)` obtains the sole command lease. `lease:send(command,{reason="...", echo=false, ...})` transmits only while the owning module remains enabled. `lease:release(reason)` revokes it. Navigation and arbitrary command leases are mutually exclusive. `API.commands.audit()` returns copied bounded history.
+`lease = API.commands.acquire(context, metadata)` obtains the sole command lease. `lease:send(command,{reason="...", echo=false, ...})` transmits only while the owning module remains enabled. `lease:release(reason)` revokes it. Navigation and arbitrary command leases are mutually exclusive. Acquisition fails while known native speedwalk, exploration, circuit, hauling, death-recovery, bulk-trade, or command/response capture state is active; every API send rechecks that state and fails closed with zero transmission if it changed. `API.commands.audit()` returns copied bounded history.
 
 `command.acknowledged` fields: `id`, `module_id`, `lease_id`, `command`, copied `metadata`, `timestamp`, `status`, and optional `reason`.
 
@@ -66,7 +68,7 @@ Each event is `{channel, available, value, timestamp}`. `value` is a deep copy a
 
 ## Hauling
 
-`API.hauling.start(context,{mode="auto"|"exchange"})` delegates to F2CE's rank-aware state machine. `auto` passes no override; `exchange` is the supported Founder+ exchange override. No hauling algorithm is duplicated. The returned handle exposes `status`, `pause`, `resume`, `cancel` (graceful), and `cancelImmediate`. Top-level equivalents and `API.hauling.status()` are also available.
+`API.hauling.start(context,{mode="auto"|"exchange"})` delegates to F2CE's rank-aware state machine. `auto` passes no override; `exchange` is the supported Founder+ exchange override. No hauling algorithm is duplicated. The API verifies that native state actually became active; cargo, rank, or other synchronous native rejection releases the service command lease and returns `E_HAUL_START`. The returned handle exposes `status`, `pause`, `resume`, `cancel` (graceful), and `cancelImmediate`. Top-level equivalents and `API.hauling.status()` are also available.
 
 Events: `hauling.started`, `hauling.state`, and `hauling.stopped`. Status copies the established F2CE state fields, including `active`, `paused`, `mode`, `current_phase`, `stopping`, and counters when present.
 

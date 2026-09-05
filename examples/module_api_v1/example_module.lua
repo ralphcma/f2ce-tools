@@ -8,7 +8,7 @@ local spec = {
     auto_enable = true,
     requires = {
         api = ">=1.0.0",
-        f2ce = ">=3.2.5",
+        f2ce = ">=3.3.0",
         capabilities = { "navigation", "gmcp.snapshots", "map.queries" },
     },
 }
