@@ -59,6 +59,45 @@ MUDDLER_EXIT=0
 
 The generated `build/f2ce-tools.mpackage` was opened as a ZIP and checked for `config.lua`, package XML, `1.0.0-candidate.3`, and the 3.3 adapter compatibility marker; every assertion passed. The local muddler-only artifact deliberately has no `MUXLET_URL` injection. GitHub's release workflow performs that injection before its build, so this local structural-validation artifact is not an installable release and is not committed.
 
+## 2026-09-05 map command-safety follow-up
+
+The 3.3-aligned branch was additionally checked after gating its automatic
+login topology refresh on mapping enablement, the topology auto-sync setting,
+login state, and a live connection. Minimal mode remains an intentional UI-only
+choice: automatic topology refresh is permitted there when the map settings
+remain enabled. Manual `map topology sync` remains available even when
+automatic mapping is disabled.
+
+```text
+tools/lua51/luac51.exe -p <each Lua file outside build/>
+LUAC checked=235 failed=0
+
+tools/lua51/lua51.exe tests/map/startup_topology_sync_run.lua src/scripts/map/events.lua
+RESULT 6 passed, 0 failed
+
+tools/lua51/lua51.exe tests/map/topology_capture_safety_run.lua src/scripts/map/topology_capture.lua
+RESULT 4 passed, 0 failed
+
+tools/lua51/lua51.exe tests/api/run.lua src/scripts/api/v1.lua
+RESULT 20 passed, 0 failed
+
+tools/lua51/lua51.exe tests/api/native_adapter_run.lua src/scripts/api/v1.lua src/scripts/api/adapter.lua
+RESULT 4 passed, 0 failed
+
+Get-Content -Raw <each JSON file and mfile> | ConvertFrom-Json
+JSON checked=33 failed=0
+
+tools/muddler/expanded/muddle-shadow-1.1.0/bin/muddle.bat
+MUDDLER_EXIT=0
+```
+
+The two map suites cover pre-login and disconnected startup, disabled mapping,
+disabled topology auto-sync, duplicate vitals initialization, disabling while
+the deferred timer is pending, cancellation before the second capture command,
+fresh reconnect behavior, and preservation of an explicitly requested manual
+sync. No network, game connection, profile, credentials, or installed package
+was used.
+
 ## Covered behavior
 
 The suites cover version/capability mismatch, duplicate module IDs, reload idempotence, scoped cleanup, 3.3 navigation start statuses, pending multi-leg navigation with an intermediate completion, native-owner contention and compare-and-release cleanup, interruption policy, both cancel modes, zero-command behavior after disable or native contention, built-in provider contention recheck, provider fallback/timeout/late-callback isolation, callback containment, nil/partial GMCP, reconnect reset, unload during active navigation, hauling mode validation, native hauling rejection, and service-lease release.
