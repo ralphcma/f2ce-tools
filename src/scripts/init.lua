@@ -21,23 +21,36 @@ local F2T_REQUIRED_MUXLET = nil
 -- build-injected: GitHub release URL (bare tag = prerelease; v-tag = production)
 local MUXLET_URL = nil
 
--- ── generic_mapper removal ────────────────────────────────────────────────────
--- generic_mapper conflicts with the f2ce-tools map system; remove it silently.
-if table.contains(getPackages(), "generic_mapper") then
-    f2t_debug_log("Removing incompatible package: generic_mapper")
-    uninstallPackage("generic_mapper")
-end
+-- ── Conflicting package removal ───────────────────────────────────────────────
+-- generic_mapper conflicts with the f2ce-tools map system; fed2-tools is
+-- superseded by it and shares alias/trigger/global names. Both go.
+--
+-- Deferred a tick and individually pcalled rather than run inline, because this
+-- is the top of the file that defines f2tRegisterAllContent, f2tInit and the
+-- whole boot sequence: an uninstall that raises here would take all of them with
+-- it and leave the package loaded but inert. Mudlet 5.0 also preinstalls
+-- generic_mapper as a default package, so this branch now runs for far more
+-- profiles than it used to, and one tick puts the uninstall after f2ce-tools has
+-- finished loading rather than partway through its own script unit.
+tempTimer(0, function()
+    if table.contains(getPackages(), "generic_mapper") then
+        f2t_debug_log("Removing incompatible package: generic_mapper")
+        local ok, err = pcall(uninstallPackage, "generic_mapper")
+        if not ok then f2t_debug_log("generic_mapper removal failed: %s", tostring(err)) end
+    end
 
--- ── fed2-tools removal ────────────────────────────────────────────────────────
--- f2ce-tools supersedes fed2-tools; the two share alias/trigger/global names and
--- cannot coexist. Announced rather than silent since it's a package the user
--- installed deliberately.
-if table.contains(getPackages(), "fed2-tools") then
-    f2t_debug_log("Removing superseded package: fed2-tools")
-    uninstallPackage("fed2-tools")
-    cecho("\n<yellow>[f2ce-tools]<reset> Removed the older <cyan>fed2-tools<reset> package, "
-        .. "which f2ce-tools replaces.\n")
-end
+    -- Announced rather than silent: a package the user installed deliberately.
+    if table.contains(getPackages(), "fed2-tools") then
+        f2t_debug_log("Removing superseded package: fed2-tools")
+        local ok, err = pcall(uninstallPackage, "fed2-tools")
+        if ok then
+            cecho("\n<yellow>[f2ce-tools]<reset> Removed the older <cyan>fed2-tools<reset> package, "
+                .. "which f2ce-tools replaces.\n")
+        else
+            f2t_debug_log("fed2-tools removal failed: %s", tostring(err))
+        end
+    end
+end)
 
 -- ── Install handler ───────────────────────────────────────────────────────────
 -- sysInstall fires during installation only, not on normal session start.
@@ -76,6 +89,10 @@ local function afterLogin(fn)
         fn()
     end)
 end
+
+-- Exposed so other scripts can gate on login without a second copy of this
+-- handler drifting from it (mudlet_env.lua).
+f2t_after_login = afterLogin
 
 -- True when the currently loaded Muxlet already meets F2T_REQUIRED_MUXLET
 -- (exact pin, not just a floor — see Mux._versionSatisfied). Reuses Muxlet's
@@ -118,31 +135,39 @@ end)
 -- because it provides its own onboarding via f2tShowModeSelect().  It also
 -- prevents Muxlet's auto_start timer from double-starting by owning fullStart().
 
--- Loops F2T_CONTENT_REGISTRARS. Also called via MuddletDevHooks.afterReload
--- below after a live dev-mode reload — Mux.registerContent() overwrites by
--- name, safe to call repeatedly.
+-- Loops F2T_CONTENT_REGISTRARS. Called from f2tInit() below, including on a
+-- live dev-mode reload (see the "if Mux and Mux._ready" branch further down)
+-- — Mux.registerContent() overwrites by name, safe to call repeatedly.
 function f2tRegisterAllContent()
     for _, registrar in ipairs(F2T_CONTENT_REGISTRARS or {}) do
         local ok, err = pcall(registrar)
         if not ok then
-            f2t_debug_log("[init] content registrar error: %s", tostring(err))
+            -- Loud, not debug-only: a registrar that dies takes its panel out of
+            -- the Content Library and leaves any pane holding it blank, which
+            -- reads as a Muxlet fault rather than a script error.
+            cecho(string.format(
+                "\n<red>[f2ce-tools]<reset> A content panel failed to register: %s\n"
+                .. "  Its pane will be empty. Please report this.\n", tostring(err)))
         end
     end
 end
 
 -- Extension point the muddlet-injected dev-mode watcher looks for (see the
 -- muddlet repo's devmode.lua) — it never assumes this table exists, so it's
--- only defined here because f2ce-tools specifically needs both hooks:
+-- only defined here because f2ce-tools specifically needs it:
 --   ready: defers a poll's blocking io.open() until after login, so it can
 --     never land mid-password-prompt.
---   afterReload: reinstalling f2ce-tools doesn't refire Muxlet's
---     "muxletReady", so content registration has to be re-run explicitly.
+--
+-- No afterReload hook: reinstalling f2ce-tools doesn't refire Muxlet's own
+-- "muxletReady", but the "if Mux and Mux._ready then tempTimer(0,
+-- onMuxletReady) end" branch below already covers exactly that case (an
+-- in-place upgrade with Mux already loaded) — it re-runs f2tInit(), which
+-- calls f2tRegisterAllContent() itself and, via its own afterLogin(...),
+-- is what actually drives f2tFullStart() too. An afterReload hook here that
+-- also called f2tRegisterAllContent() only duplicated that same tick's work
+-- a moment earlier, registering every panel twice on every live reload.
 MuddletDevHooks = {
     ready = function() return F2T_LOGGED_IN end,
-    afterReload = function()
-        F2T_CONTENT_REGISTRARS = {}
-        if f2tRegisterAllContent then f2tRegisterAllContent() end
-    end,
 }
 
 -- onReady callback passed to Mux.bootHost; runs once a satisfying (exactly
@@ -184,12 +209,12 @@ function f2tInit()
                 -- layout loads instead of Muxlet's blank default workspace.
                 f2t_settings_set("f2t", "mux_autostart", true)
                 Mux.configureHost({ defaultWorkspace = "f2ce-tools" })
-                Mux.fullStart()
+                f2tFullStart()
             elseif f2tShowModeSelect then
                 f2tShowModeSelect()
             end
         elseif autostart == true then
-            Mux.fullStart()
+            f2tFullStart()
         end
         -- autostart == false: Minimal mode — Muxlet is available but not started.
     end)
@@ -256,6 +281,11 @@ local function bootHostOpts()
         opts.updateRepo              = "federation2-community/f2ce-tools"
         opts.updateSettingsNamespace = "f2t"
         opts.updateSettingsTab       = "F2CE-Tools/Update"
+
+        -- Only meaningful alongside updateRepo -- Mux._hostUpdate (which
+        -- carries this through to the restart-recommended dialog) is only
+        -- ever set when updateRepo is. See workspace.lua's f2tOnRestartDeclined.
+        opts.onRestartDeclined = f2tOnRestartDeclined
     end
 
     return opts
@@ -307,7 +337,15 @@ local function installMuxlet()
 end
 
 if Mux and Mux._ready then
-    onMuxletReady()
+    -- Deferred by a tick, never called straight through. Mudlet runs each script
+    -- body as it loads, in document order, and this file is 12th of 221 — every
+    -- content module that fills F2T_CONTENT_REGISTRARS loads after it. When the
+    -- pinned Muxlet is already loaded (an in-place upgrade, rather than a fresh
+    -- install where Muxlet arrives later and muxletReady drives this), bootHost
+    -- runs onReady synchronously, so registering from here would only ever see
+    -- the handful of registrars declared above this file. One tick lands after
+    -- the whole package has loaded.
+    tempTimer(0, onMuxletReady)
 elseif not table.contains(getPackages(), MUXLET_PKG) then
     if not MUXLET_URL then
         cecho("\n<red>[f2ce-tools]<reset> Cannot install Muxlet: build is missing MUXLET_URL injection. "

@@ -25,11 +25,8 @@ local function setCaptureTriggers(on)
     pcall(fn, "galaxy_nav_end")
 end
 
-local finishTimer = nil
 local function resetFinishTimer()
-    if finishTimer then killTimer(finishTimer) end
-    finishTimer = tempTimer(0.5, function()
-        finishTimer = nil
+    f2t_capture_arm("galaxy", function()
         if F2T_GALAXY.capture_active then f2t_galaxy_finish_capture() end
     end)
 end
@@ -52,6 +49,7 @@ function f2t_galaxy_scrape()
         f2t_debug_log("[galaxy] scrape skipped (offline)")
         return
     end
+    f2t_capture_close("galaxy")
     F2T_GALAXY.loading        = true
     F2T_GALAXY.capture_active = true
     F2T_GALAXY.capture_lines  = {}
@@ -109,11 +107,11 @@ local function autoExpandCurrentLocation()
     local cd  = F2T_GALAXY.cartels[ri.cartel]
     local syn = cd and cd.syndicate
     if syn then
-        F2T_GALAXY.expanded[syn] = true
-        F2T_GALAXY.expanded[syn .. ":" .. ri.cartel] = true
+        F2T_GALAXY.expanded["syn:" .. syn] = true
+        F2T_GALAXY.expanded["cartel:" .. syn .. ":" .. ri.cartel] = true
     end
     if ri.system and ri.system ~= "" then
-        F2T_GALAXY.expanded[ri.cartel .. ":" .. ri.system] = true
+        F2T_GALAXY.expanded["system:" .. ri.cartel .. ":" .. ri.system] = true
     end
 end
 
@@ -121,7 +119,7 @@ function f2t_galaxy_finish_capture()
     if not F2T_GALAXY.capture_active then return end
     F2T_GALAXY.capture_active = false
     setCaptureTriggers(false)
-    if finishTimer then killTimer(finishTimer); finishTimer = nil end
+    f2t_capture_close("galaxy")
 
     if #F2T_GALAXY.capture_lines == 0 then
         F2T_GALAXY.loading = false
@@ -180,13 +178,106 @@ end
 
 -- Navigation / info
 
-function f2t_galaxy_nav_to(_kind, name)
-    expandAlias("nav " .. name)
+-- A system row means "take me to that system", which is its space area's link
+-- room - not the namesake planet a bare name resolves to. Planet rows keep the
+-- bare form so they follow the Planet nav default setting, unless a specific
+-- point-of-interest flag was requested (a planet row's POI chip), in which
+-- case that flag rides along in the same "<place> <flag>" grammar navigate.lua
+-- already understands.
+function f2t_galaxy_nav_to(kind, name, flag)
+    if kind == "system" then
+        expandAlias("nav " .. name .. " link")
+    elseif flag then
+        expandAlias("nav " .. name .. " " .. flag)
+    else
+        expandAlias("nav " .. name)
+    end
     f2t_galaxy_hide_nav()
 end
 
 local function galaxyInfo(kind, name)
     send("di " .. kind .. " " .. name)
+end
+
+-- Explore button, present on every row type. Goes through expandAlias
+-- (same as f2t_galaxy_nav_to) rather than calling the explore_*_start
+-- functions directly, so the equivalent typed command echoes to the console
+-- - the player can see exactly what ran, same as if they'd typed it. Unlike
+-- f2t_galaxy_nav_to, this does NOT hide the navigator: exploring is a
+-- longer-running, multi-step process the player wants to watch play out
+-- alongside the game's own output, not a one-shot "go there" that's done
+-- the moment it's sent.
+function f2t_galaxy_explore(kind, name)
+    expandAlias("map explore " .. kind .. " " .. name)
+end
+
+-- "Planet found" dialog: a planet row's dot going green means brief-mode
+-- exploration has nothing obviously missing, so clicking it again shouldn't
+-- silently repeat that. Offers a full sweep instead, rather than adding a
+-- second per-row button just for full mode. Follows the same
+-- createDialog/registerContent(internal)/dialogCss/wireDialogButton pattern
+-- as ui/dialogs/nav_confirm.lua's Proceed/Cancel dialog.
+local _pendingFullExploreConfirm = nil
+
+-- Defined here, registered from f2tRegisterGalaxy. Registering at load time
+-- instead would call into Mux while Muxlet may be mid-reinstall: a nil
+-- registerContent raises, and the rest of this file -- f2tRegisterGalaxy and its
+-- enrolment included -- never runs, so the navigator goes missing with no error
+-- the registrar loop could report.
+local fullExploreConfirmDef = {
+    internal = true,
+    apply = function(target)
+        if target.contentBg then target.contentBg:echo(""); target.contentBg:hide() end
+        if not _pendingFullExploreConfirm then return end
+        local pending = _pendingFullExploreConfirm
+        _pendingFullExploreConfirm = nil
+
+        local c = target.content
+        local body = Geyser.Label:new({
+            name = target._gid .. "_gxfe_body", x = "5%", y = 14, width = "90%", height = 100,
+        }, c)
+        body:setStyleSheet(Mux.dialogCss.body)
+        body:echo(string.format(
+            "<font color='#7ab4ff'>%s</font> has already been found.<br><br>" ..
+            "Run a full exploration to sweep every room?", pending.name))
+
+        local cancelBtn = Geyser.Label:new({
+            name = target._gid .. "_gxfe_cancel", x = "8%", y = 128, width = "38%", height = 34,
+        }, c)
+        cancelBtn:setStyleSheet(Mux.dialogCss.button)
+        cancelBtn:echo("<center>Cancel</center>")
+        Mux.wireDialogButton(cancelBtn, Mux.dialogCss.button, Mux.dialogCss.buttonHover)
+
+        local fullBtn = Geyser.Label:new({
+            name = target._gid .. "_gxfe_full", x = "54%", y = 128, width = "38%", height = 34,
+        }, c)
+        fullBtn:setStyleSheet(Mux.dialogCss.buttonPrimary)
+        fullBtn:echo("<center>Full Explore</center>")
+        Mux.wireDialogButton(fullBtn, Mux.dialogCss.buttonPrimary, Mux.dialogCss.buttonPrimaryHover)
+
+        target.onClose = function() end
+        cancelBtn:setClickCallback(function()
+            target.onClose = nil
+            target:close()
+        end)
+        fullBtn:setClickCallback(function()
+            target.onClose = nil
+            target:close()
+            -- The "map explore planet <name>" form is hardcoded to brief mode;
+            -- "full <name>" is the generic dispatcher form that actually
+            -- accepts a mode, auto-detecting planet vs. system by name.
+            expandAlias("map explore full " .. pending.name)
+        end)
+    end,
+    remove = function(_) end,
+}
+
+local function showGalaxyFullExploreConfirm(name)
+    local dialog = Mux.createDialog({ title = "Planet Found", width = 420, height = 210 })
+    _pendingFullExploreConfirm = { name = name }
+    Mux._applyContent(dialog, "f2t_galaxy_full_explore_confirm")
+    dialog:show()
+    dialog:raise()
 end
 
 -- Search match helpers
@@ -222,6 +313,117 @@ local function syndicateHasChildrenMatch(syd, q)
     return false
 end
 
+-- Coverage: how much of the galaxy actually has map data, computed live
+-- against the room DB (not F2T_GALAXY, which only ever knows what "di
+-- systems" listed). ctx hoists one getAreaTable() call per populate() so
+-- checking a few hundred planets costs plain table lookups, not one Mudlet
+-- API round-trip apiece.
+local function buildCoverageCtx()
+    local ctx = { areas = getAreaTable() or {}, lowerAreas = {} }
+    for nm in pairs(ctx.areas) do ctx.lowerAreas[nm:lower()] = true end
+    return ctx
+end
+
+local function areaKnown(ctx, name)
+    if ctx.areas[name] then return true end
+    return ctx.lowerAreas[name:lower()] ~= nil
+end
+
+local function systemCoverage(ctx, sd)
+    local mapped, total = 0, 0
+    for _, pd in ipairs(sd.planets or {}) do
+        if pd.name ~= (sd.name .. " Space") then
+            total = total + 1
+            if areaKnown(ctx, pd.name) then mapped = mapped + 1 end
+        end
+    end
+    return mapped, total
+end
+
+local function cartelCoverage(ctx, cd)
+    local mapped, total = 0, 0
+    for sn, sd in pairs(cd.systems or {}) do
+        if sn ~= (cd.name .. " Space") then
+            local m, t = systemCoverage(ctx, sd)
+            mapped = mapped + m; total = total + t
+        end
+    end
+    return mapped, total
+end
+
+local function syndicateCoverage(ctx, syd)
+    local mapped, total = 0, 0
+    for _, cd in pairs(syd.cartels or {}) do
+        local m, t = cartelCoverage(ctx, cd)
+        mapped = mapped + m; total = total + t
+    end
+    return mapped, total
+end
+
+-- A cartel/syndicate/system with zero planets mapped still counts as
+-- "partial" rather than fully unmapped when its own space area is known
+-- (e.g. the link room has been logged but no planet visited yet).
+local function coverageState(mapped, total, space_known)
+    if total > 0 and mapped == total then return "mapped" end
+    if mapped > 0 or space_known then return "partial" end
+    return "unmapped"
+end
+
+-- Points of interest a planet row can offer direct nav to. Room-flag names
+-- and symbols/colors come straight from map/style.lua and map/room_query.lua
+-- (F2T_MAP_KNOWN_FLAGS et al) so the navigator never drifts from the map's
+-- own vocabulary. "link"/"orbit" are space-area concepts, not planet POIs.
+local PLANET_POI_FLAGS = { "shuttlepad", "exchange", "shipyard", "hospital", "bar", "courier" }
+local FLAG_DISPLAY_NAME = {
+    shuttlepad = "Shuttlepad", exchange = "Exchange", shipyard = "Shipyard",
+    hospital = "Hospital", bar = "Bar", courier = "Courier",
+}
+
+-- One toggle per POI type in the global F2CE-Tools settings window (not the
+-- navigator's own wrench dialog), so unchecking all six leaves just the plain
+-- nav arrow on every planet row.
+for _, flag in ipairs(PLANET_POI_FLAGS) do
+    f2t_settings_register("galaxy", "poi_" .. flag, {
+        tab         = "F2CE-Tools/Galaxy",
+        label       = "Show " .. FLAG_DISPLAY_NAME[flag] .. " icon",
+        description = "Show a clickable " .. FLAG_DISPLAY_NAME[flag]
+            .. " icon on mapped planet rows in the Galaxy Navigator.",
+        default     = true,
+    })
+end
+
+local function poiVisible(flag)
+    local v = f2t_settings_get("galaxy", "poi_" .. flag)
+    if v == nil then return true end
+    return v and true or false
+end
+
+-- Only called for planets already known to be mapped (see areaKnown), so an
+-- unmapped planet never pays for a room scan that can't find anything. Most
+-- player planets cram every service into the shuttlepad's own room, so a
+-- flag whose room matches the shuttlepad's is folded away rather than
+-- stacking a redundant chip next to it.
+local function planetFlags(name)
+    local area_id = f2t_map_get_area_id(name)
+    if not area_id then return {} end
+
+    local room_of = {}
+    for _, flag in ipairs(PLANET_POI_FLAGS) do
+        room_of[flag] = f2t_map_find_room_with_flag(area_id, flag)
+    end
+    local shuttlepad_room = room_of.shuttlepad
+
+    local present = {}
+    for _, flag in ipairs(PLANET_POI_FLAGS) do
+        local room_id    = room_of[flag]
+        local co_located = shuttlepad_room and flag ~= "shuttlepad" and room_id == shuttlepad_room
+        if room_id and not co_located and poiVisible(flag) then
+            present[#present + 1] = flag
+        end
+    end
+    return present
+end
+
 -- Styles (self-contained)
 local ROW_H      = 24    -- px per row (tied to font size, not pane size)
 local INDENT_PCT = 4
@@ -229,6 +431,13 @@ local EXPAND_PCT = 5
 local ICON_PCT   = 5
 local NAV_X      = "93%"
 local NAV_W      = "5%"
+
+-- Without a QToolTip rule, a widget's own dark background bleeds into its
+-- native tooltip box (unreadable/solid-black) instead of a readable one -
+-- same fix as hauling_jobs.lua's _TOOLTIP_CSS. Appended to every widget's
+-- own stylesheet that carries a tooltip, since Qt scopes it per-widget.
+local CSS_TOOLTIP = "QToolTip{background-color:#1d2030;color:#e8ebf5;" ..
+    "border:1px solid rgba(255,255,255,0.18);padding:3px;}"
 
 local CSS_BG     = "background-color: rgb(18,18,26); border: none;"
 local CSS_ROW    = "background-color: rgb(22,22,30); border: none; border-bottom: 1px solid rgba(255,255,255,35);"
@@ -241,11 +450,26 @@ local CSS_BTN    = [[
         qproperty-alignment: AlignCenter; }
     QLabel::hover{ background-color: rgba(60,60,70,220); border-color: rgba(120,180,255,200); color:white; }
 ]]
-local CSS_BTN_CUR = [[
+-- Name-label-only styles, left-aligned so every row's name starts at the
+-- same x regardless of how many POI chips (or a badge) shrink the box on
+-- its right - center-aligning it (as CSS_BTN does) made the text visibly
+-- drift row to row as that box width changed. Not folded into CSS_BTN
+-- itself since the expand +/- button shares that constant and should stay
+-- centered. No `color:` here - see NAME_COLOR below for why. No explicit
+-- qproperty-alignment either: AlignLeft|AlignVCenter is QLabel's own default,
+-- and setting it via a piped qproperty-alignment value (unlike every other
+-- single-flag AlignCenter in this file) made Qt reject the whole rule and
+-- fall back to the native white-on-black QLabel look - the "white boxes"
+-- bug. Leaving it unset gets the same alignment for free, safely.
+local CSS_NAME = [[
+    QLabel{ background-color: rgba(40,40,45,200); border:1px solid rgba(100,100,110,180);
+        border-radius:3px; font-size:11px; font-weight:bold; padding-left:4px; }
+    QLabel::hover{ background-color: rgba(60,60,70,220); border-color: rgba(120,180,255,200); }
+]]
+local CSS_NAME_CUR = [[
     QLabel{ background-color: rgba(40,40,45,200); border:1px solid rgba(255,140,0,200);
-        border-radius:3px; color: rgba(200,200,210,255); font-size:11px; font-weight:bold;
-        qproperty-alignment: AlignCenter; }
-    QLabel::hover{ background-color: rgba(60,60,70,220); border-color: rgba(255,165,0,255); color:white; }
+        border-radius:3px; font-size:11px; font-weight:bold; padding-left:4px; }
+    QLabel::hover{ background-color: rgba(60,60,70,220); border-color: rgba(255,165,0,255); }
 ]]
 local CSS_NAV = [[
     QLabel{ background-color: rgba(40,120,80,210); border:1px solid rgba(60,140,100,180);
@@ -259,6 +483,43 @@ local ICONS = {
     planet    = { "🌍", "#4ecdc4" },
 }
 
+-- Coverage state colors and row layout for the state-dot/badge/POI-chip
+-- columns createRow reserves alongside a row's icon and on its right, before
+-- the nav arrow.
+-- "mapped" was #7ed99a (pale mint) - too close to "unmapped" grey on some
+-- screens to tell apart at a glance. A richer, more saturated green reads
+-- clearly distinct from both the grey and the amber "partial" state.
+local STATE_COLOR = { mapped = "#22c55e", partial = "#e0b34d", unmapped = "#767b8a" }
+local BADGE_W    = 20   -- % width of the "n/m" coverage badge (syndicate/cartel/system rows) -
+                         -- wide enough for up to 4-digit counts ("9999/9999") at BADGE_FONT_PX
+local BADGE_FONT_PX = 8 -- px; smaller than the row's other labels so 4-digit counts still fit BADGE_W
+local CHIP_W     = 4    -- % width per POI chip (planet rows)
+local STATE_PCT  = 4    -- % width of the state dot, reserved before every row's icon
+local SCROLLBAR_PX = 8    -- matches CSS_SCROLL's QScrollBar:vertical width; rows must not paint under it
+
+-- Coverage is shown as its own dot rather than tinting the row-type icon:
+-- 🏛️🌌⭐🌍 are color-emoji glyphs, and Qt's QSS `color` property has no
+-- effect on them (only on plain/monochrome text) - so tinting the icon
+-- silently did nothing. One consistent filled-circle glyph, recolored per
+-- state (green/amber/grey, the traffic-light convention), reads as a single
+-- status light rather than three unrelated symbols. It doubles as the
+-- explore button: clicking it explores that syndicate/cartel/system/planet,
+-- so status and action live in one element instead of two.
+local STATE_DOT_GLYPH = "●"
+-- No "click to check for anything new" for the mapped case: a refresh
+-- already reflects any new rooms as unmapped/partial on its own, and a
+-- planet's mapped click opens the full-explore dialog instead (see
+-- showGalaxyFullExploreConfirm) rather than re-running brief mode.
+local STATE_TOOLTIP = {
+    mapped   = "Explored",
+    partial  = "Partially Explored — click to continue exploring",
+    unmapped = "Unexplored — click to explore",
+}
+local ROW_TYPE_LABEL = { syndicate = "Syndicate", cartel = "Cartel", system = "System", planet = "Planet" }
+-- Name text color, inline (see below) since setStyleSheet's `color:` never
+-- reaches text set via :echo() in this Mudlet/Qt binding.
+local NAME_COLOR = "#c8c8d2"
+
 -- Icon button style (refresh / collapse / clear)
 local CSS_ICONBTN = [[
     QLabel{ background-color: rgba(40,40,45,210); border:1px solid rgba(100,100,110,180);
@@ -270,7 +531,8 @@ local CSS_ICONBTN = [[
 local HEADING_ROW_H  = 28    -- vertical space the title row occupies when shown
 local TOPBAR_FULL_H  = 86    -- title + search + collapse-all rows
 local TOPBAR_MIN_H   = TOPBAR_FULL_H - HEADING_ROW_H   -- search + collapse-all only
-local FOOTER_H       = 24
+local FOOTER_H       = 0     -- was the legend strip's height; kept at 0 rather than reworking
+                              -- every "+ FOOTER_H" formula below now that the legend is gone
 
 local function topbarHeightFor(inst)
     return inst.showHeading and TOPBAR_FULL_H or TOPBAR_MIN_H
@@ -307,23 +569,34 @@ local function ageStr(ts)
     else                    return string.format("%dd ago", math.floor(age / 86400)) end
 end
 
--- Styled row: syndicate / cartel / system / planet
-local function createRow(inst, parent, name, row_type, indent_level, y_px, data, is_current)
+-- Styled row: syndicate / cartel / system / planet. cov carries the coverage
+-- state populate() already computed for this node: { state, mapped, total }
+-- for syndicate/cartel/system rows, { state, flags } for planet rows.
+local function createRow(inst, parent, name, row_type, indent_level, y_px, data, is_current, cov)
+    cov = cov or { state = "mapped" }
     local cartel_ctx    = (data and data.cartel) or ""
     local syndicate_ctx = (data and data.syndicate) or ""
     -- "_r" suffix keeps the uid from ending in a Class$ pattern Geyser would skip.
     local uid = (string.format("gx_%s_%d_%s_%s_%s", inst.gid, inst.epoch, row_type, cartel_ctx, name)
         :gsub("[^%w_]", "_")) .. "_r"
 
-    local row = Geyser.Label:new({ name = uid, x = 0, y = y_px, width = "100%", height = ROW_H }, parent)
+    -- Narrower than the content pane itself: inst.content spans the FULL scrollbox
+    -- width (including the strip the scrollbar overlaps) so no background gap shows,
+    -- but rows must stop short of that strip or their rightmost text (badge/nav) gets
+    -- clipped under the scrollbar. See inst.contentW's comment where it's set.
+    local row_w = math.max(50, (inst.contentW or 200) - SCROLLBAR_PX)
+    local row = Geyser.Label:new({ name = uid, x = 0, y = y_px, width = row_w, height = ROW_H }, parent)
     row:setStyleSheet(CSS_ROW)
 
     local indent_pct = 1 + indent_level * INDENT_PCT
 
+    -- Namespaced by row type so a cartel key ("cartel:Syn:Name") can never
+    -- collide with a system key ("system:Cartel:Name") even when a cartel's
+    -- hub system (and its syndicate) all share the same name.
     local exp_key
-    if row_type == "syndicate" then exp_key = name
-    elseif row_type == "cartel" then exp_key = syndicate_ctx .. ":" .. name
-    elseif row_type == "system" then exp_key = cartel_ctx .. ":" .. name end
+    if row_type == "syndicate" then exp_key = "syn:" .. name
+    elseif row_type == "cartel" then exp_key = "cartel:" .. syndicate_ctx .. ":" .. name
+    elseif row_type == "system" then exp_key = "system:" .. cartel_ctx .. ":" .. name end
 
     if exp_key then
         local is_exp = F2T_GALAXY.expanded[exp_key] or false
@@ -337,32 +610,119 @@ local function createRow(inst, parent, name, row_type, indent_level, y_px, data,
         end)
     end
 
-    local icon_x_pct = indent_pct + EXPAND_PCT
+    -- Coverage state and the explore trigger live in one element: a single
+    -- filled-circle status light (green/amber/grey), clicking it explores
+    -- that syndicate/cartel/system/planet. A separate explore button next to
+    -- it would just be a second control for information this dot already
+    -- carries.
+    local dot_x_pct = indent_pct + EXPAND_PCT
+    local dot = Geyser.Label:new({ name = uid .. "_state", x = dot_x_pct .. "%", y = 1,
+        width = STATE_PCT .. "%", height = ROW_H - 2 }, row)
+    -- QLabel{}-wrapped, not a bare declaration list, even though a flat
+    -- string normally works fine (see icon/badge elsewhere in this file):
+    -- mixing a bare list with the appended QToolTip{} rule below is what
+    -- was making Qt fall back to native (solid-black) tooltip styling here.
+    dot:setStyleSheet("QLabel{ background-color:transparent; font-size:13px; font-weight:bold; }" .. CSS_TOOLTIP)
+    -- The color has to live in the echoed HTML, not the label's stylesheet:
+    -- setStyleSheet's `color:` never reaches text set via :echo() in this
+    -- Mudlet/Qt binding (see hauling_jobs.lua's colored cells for the same
+    -- pattern already proven to work).
+    dot:echo(string.format("<center><span style='color:%s;'>%s</span></center>",
+        STATE_COLOR[cov.state] or STATE_COLOR.unmapped, STATE_DOT_GLYPH))
+    local planet_already_found = (row_type == "planet" and cov.state == "mapped")
+    if planet_already_found then
+        dot:setClickCallback(function() showGalaxyFullExploreConfirm(name) end)
+        dot:setToolTip("Explored — click for full explore options")
+    else
+        dot:setClickCallback(function() f2t_galaxy_explore(row_type, name) end)
+        dot:setToolTip(STATE_TOOLTIP[cov.state] or STATE_TOOLTIP.unmapped)
+    end
+
+    local icon_x_pct = dot_x_pct + STATE_PCT
     local ic = ICONS[row_type]
     local icon = Geyser.Label:new({ name = uid .. "_ico", x = icon_x_pct .. "%", y = 1,
         width = ICON_PCT .. "%", height = ROW_H - 2 }, row)
-    icon:setStyleSheet(string.format("background-color:transparent; color:%s; font-size:11px;", ic[2]))
+    -- Same QLabel{}-wrapping note as the state dot above: this widget also
+    -- carries a tooltip now, so it needs the same fix.
+    icon:setStyleSheet(string.format(
+        "QLabel{ background-color:transparent; color:%s; font-size:11px; }%s", ic[2], CSS_TOOLTIP))
     icon:echo("<center>" .. ic[1] .. "</center>")
+    icon:setToolTip(ROW_TYPE_LABEL[row_type] .. " " .. name)
 
     local name_x_pct = icon_x_pct + ICON_PCT
     local has_nav    = (row_type == "system" or row_type == "planet")
-    local name_end   = has_nav and 91 or 97
+    local has_badge  = (row_type == "syndicate" or row_type == "cartel" or row_type == "system")
+    local num_chips  = (row_type == "planet" and cov.flags) and #cov.flags or 0
+
+    local name_end
+    if row_type == "planet" then name_end = 91 - num_chips * CHIP_W
+    elseif row_type == "system" then name_end = 93 - BADGE_W   -- badge sits flush left of nav (93-98)
+    elseif has_badge then name_end = 98 - BADGE_W               -- badge flush against row's right edge (no nav)
+    else name_end = 97 end
     local name_w_pct = math.max(5, name_end - name_x_pct)
 
     local nlbl = Geyser.Label:new({ name = uid .. "_name", x = name_x_pct .. "%", y = 1,
         width = name_w_pct .. "%", height = ROW_H - 2 }, row)
-    nlbl:setStyleSheet(is_current and CSS_BTN_CUR or CSS_BTN)
-    nlbl:echo(name)
+    nlbl:setStyleSheet((is_current and CSS_NAME_CUR or CSS_NAME) .. CSS_TOOLTIP)
+    nlbl:echo(string.format("<span style='color:%s;'>%s</span>", NAME_COLOR, name))
     nlbl:setClickCallback(function() galaxyInfo(row_type, name) end)
-    nlbl:setToolTip("Click for info (di " .. row_type .. ")")
+
+    local info_tip = "Click for info (di " .. row_type .. ")"
+    if has_badge then
+        nlbl:setToolTip(string.format("%d of %d planets mapped\n%s", cov.mapped, cov.total, info_tip))
+    elseif row_type == "planet" then
+        if cov.state == "unmapped" then
+            nlbl:setToolTip("Not yet mapped\n" .. info_tip)
+        elseif num_chips > 0 then
+            local names = {}
+            for _, f in ipairs(cov.flags) do names[#names + 1] = FLAG_DISPLAY_NAME[f] end
+            nlbl:setToolTip(table.concat(names, ", ") .. "\n" .. info_tip)
+        else
+            nlbl:setToolTip("Mapped — no points of interest logged yet\n" .. info_tip)
+        end
+    else
+        nlbl:setToolTip(info_tip)
+    end
+
+    if has_badge then
+        local badge_x = (row_type == "system") and (93 - BADGE_W) or (98 - BADGE_W)
+        local blbl = Geyser.Label:new({ name = uid .. "_badge", x = badge_x .. "%", y = 1,
+            width = BADGE_W .. "%", height = ROW_H - 2 }, row)
+        blbl:setStyleSheet(string.format(
+            "background-color:transparent; font-size:%dpx; font-weight:bold; " ..
+            "qproperty-alignment: AlignRight; padding-right:2px;", BADGE_FONT_PX))
+        blbl:echo(string.format("<span style='color:%s;'>%d/%d</span>", STATE_COLOR[cov.state], cov.mapped, cov.total))
+    end
+
+    if row_type == "planet" and num_chips > 0 then
+        local group_start = 92 - num_chips * CHIP_W
+        for i, flag in ipairs(cov.flags) do
+            local cx = group_start + (i - 1) * CHIP_W
+            local r, g, b = f2t_map_get_flag_badge_rgb(flag)
+            r, g, b = r or 60, g or 60, b or 70
+            local chip = Geyser.Label:new({ name = uid .. "_flag_" .. flag, x = cx .. "%", y = 1,
+                width = CHIP_W .. "%", height = ROW_H - 2 }, row)
+            chip:setStyleSheet(string.format([[
+                QLabel{ background-color: rgba(%d,%d,%d,170); border:1px solid rgba(255,255,255,50);
+                    border-radius:3px; font-size:9px; font-weight:bold;
+                    qproperty-alignment:AlignCenter; }
+                QLabel::hover{ background-color: rgba(%d,%d,%d,230); border-color: rgba(255,255,255,140); }
+            ]], r, g, b, r, g, b) .. CSS_TOOLTIP)
+            -- Same as the state dot/badge: color has to be inline in the
+            -- echoed HTML, not the stylesheet, for it to actually apply.
+            chip:echo(string.format("<span style='color:white;'>%s</span>", f2t_map_get_flag_symbol(flag) or "?"))
+            chip:setClickCallback(function() f2t_galaxy_nav_to("planet", name, flag) end)
+            chip:setToolTip(FLAG_DISPLAY_NAME[flag] .. " — nav " .. name .. " " .. flag)
+        end
+    end
 
     if has_nav then
         local nbtn = Geyser.Label:new({ name = uid .. "_nav", x = NAV_X, y = 1,
             width = NAV_W, height = ROW_H - 2 }, row)
-        nbtn:setStyleSheet(CSS_NAV)
+        nbtn:setStyleSheet(CSS_NAV .. CSS_TOOLTIP)
         nbtn:echo("<center>→</center>")
         nbtn:setClickCallback(function() f2t_galaxy_nav_to(row_type, name) end)
-        nbtn:setToolTip("Navigate here")
+        nbtn:setToolTip("Navigate here (planet nav default)")
     end
 
     inst.rows[#inst.rows + 1] = row
@@ -376,6 +736,39 @@ local function reportAutoFit(inst, contentH)
     local h = topbarHeightFor(inst) + contentH + FOOTER_H
     inst.target._autoFitHeight = h
     if Mux and Mux.requestAutoFit then Mux.requestAutoFit(inst.target, h) end
+end
+
+-- Moves a matching entry to the front of an already-sorted name list. The
+-- ScrollBox has no scrollTo/ensureVisible hook to jump the viewport to an
+-- arbitrary row, so this is the closest approximation of "scroll to it"
+-- available: sort the target to where the view already starts (see
+-- F2T_GALAXY.scrollTarget, set by player_card.lua's openInGalaxy).
+local function hoistFront(list, matchName)
+    if not matchName then return end
+    for i, v in ipairs(list) do
+        if v == matchName then
+            table.remove(list, i)
+            table.insert(list, 1, v)
+            return
+        end
+    end
+end
+
+-- Re-covers the scrollbox viewport with content/stateLbl so Geyser.ScrollBox's
+-- unstyled native background (white; it has no working setStyleSheet) never
+-- peeks through below a shorter widget. inst.rowsH is the actual row content
+-- height from the last populate(); the covered height never shrinks below it
+-- even if the viewport momentarily reads smaller than the real content.
+local function recoverContentCoverage(inst)
+    if not inst or not inst.scroll or not inst.content then return end
+    local freshH = (inst.scroll.get_height and inst.scroll:get_height()) or 0
+    if freshH <= 0 then return end
+    local h = math.max(inst.rowsH or 0, freshH)
+    if h ~= inst._coveredH then
+        pcall(function() inst.content:resize(inst.contentW or 200, h) end)
+        pcall(function() inst.stateLbl:resize(inst.contentW or 200, h) end)
+        inst._coveredH = h
+    end
 end
 
 -- Populate one instance's scroll tree, filtered by search
@@ -423,6 +816,8 @@ local function populate(gid)
     local syn_sorted = {}
     for syn in pairs(g.syndicates or {}) do syn_sorted[#syn_sorted + 1] = syn end
     table.sort(syn_sorted)
+    local target = g.scrollTarget
+    hoistFront(syn_sorted, target and target.syn)
 
     local ri         = gmcp and gmcp.room and gmcp.room.info
     local cur_cartel = ri and ri.cartel or ""
@@ -437,36 +832,57 @@ local function populate(gid)
         end
     end
 
+    -- Single getAreaTable() call for the whole populate() pass; every
+    -- mapped/partial/unmapped check below is then a plain table lookup
+    -- against ctx, not a fresh Mudlet API round-trip per row.
+    local ctx = buildCoverageCtx()
+
     local y = 2
     for _, syn in ipairs(syn_sorted) do
         local syd = g.syndicates[syn]
         if not searching or syndicateHasMatch(syd, q) then
-            createRow(inst, inst.content, syn, "syndicate", 0, y, syd); y = y + ROW_H
+            local syn_mapped, syn_total = syndicateCoverage(ctx, syd)
+            local syn_cov = { state = coverageState(syn_mapped, syn_total, false),
+                mapped = syn_mapped, total = syn_total }
+            createRow(inst, inst.content, syn, "syndicate", 0, y, syd, nil, syn_cov); y = y + ROW_H
             local auto_syn = searching and syndicateHasChildrenMatch(syd, q)
-            if g.expanded[syn] or auto_syn then
+            local synkey   = "syn:" .. syn
+            if g.expanded[synkey] or auto_syn then
                 local cn_sorted = {}
                 for cn in pairs(syd.cartels or {}) do cn_sorted[#cn_sorted + 1] = cn end
                 table.sort(cn_sorted)
+                if target and target.syn == syn then hoistFront(cn_sorted, target.cartel) end
                 for _, cn in ipairs(cn_sorted) do
                     local cd = syd.cartels[cn]
-                    local show_c = not searching or g.expanded[syn] or cartelHasMatch(cd, q)
+                    local show_c = not searching or g.expanded[synkey] or cartelHasMatch(cd, q)
                     if show_c then
-                        createRow(inst, inst.content, cn, "cartel", 1, y, cd); y = y + ROW_H
-                        local ckey = syn .. ":" .. cn
+                        local cart_mapped, cart_total = cartelCoverage(ctx, cd)
+                        local cart_cov = { state = coverageState(cart_mapped, cart_total, false),
+                            mapped = cart_mapped, total = cart_total }
+                        createRow(inst, inst.content, cn, "cartel", 1, y, cd, nil, cart_cov); y = y + ROW_H
+                        local ckey = "cartel:" .. syn .. ":" .. cn
                         local c_named = searching and qMatches(cd.name, q)
                         local auto_c  = searching and not c_named and cartelHasChildrenMatch(cd, q)
                         if g.expanded[ckey] or auto_c then
                             local ss = {}
                             for sn in pairs(cd.systems or {}) do ss[#ss + 1] = sn end
                             table.sort(ss)
+                            if target and target.syn == syn and target.cartel == cn then
+                                hoistFront(ss, target.system)
+                            end
                             for _, sn in ipairs(ss) do
                                 if sn ~= (cn .. " Space") then
                                     local sd = cd.systems[sn]
                                     local show_s = not searching or g.expanded[ckey] or systemHasMatch(sd, q)
                                     if show_s then
                                         local sys_cur = (sn == cur_system) and (cn == cur_cartel) and (cur_planet == "")
-                                        createRow(inst, inst.content, sn, "system", 2, y, sd, sys_cur); y = y + ROW_H
-                                        local skey = cn .. ":" .. sn
+                                        local sys_mapped, sys_total = systemCoverage(ctx, sd)
+                                        local space_known = areaKnown(ctx, sn .. " Space")
+                                        local sys_cov = { state = coverageState(sys_mapped, sys_total, space_known),
+                                            mapped = sys_mapped, total = sys_total }
+                                        createRow(inst, inst.content, sn, "system", 2, y, sd, sys_cur, sys_cov)
+                                        y = y + ROW_H
+                                        local skey = "system:" .. cn .. ":" .. sn
                                         local s_named = searching and qMatches(sd.name, q)
                                         local auto_s  = searching and not s_named and systemHasPlanetMatch(sd, q)
                                         if g.expanded[skey] or auto_s then
@@ -476,7 +892,11 @@ local function populate(gid)
                                                         not searching or g.expanded[skey] or planetMatches(pd, q)
                                                     if show_p then
                                                         local pcur = (pd.name == cur_planet) and (sn == cur_system)
-                                                        createRow(inst, inst.content, pd.name, "planet", 3, y, pd, pcur)
+                                                        local p_mapped = areaKnown(ctx, pd.name)
+                                                        local p_cov = { state = p_mapped and "mapped" or "unmapped",
+                                                            flags = p_mapped and planetFlags(pd.name) or {} }
+                                                        createRow(inst, inst.content, pd.name, "planet", 3, y, pd,
+                                                            pcur, p_cov)
                                                         y = y + ROW_H
                                                     end
                                                 end
@@ -493,8 +913,33 @@ local function populate(gid)
     end
 
     -- Resize AFTER all rows exist; resizing mid-loop corrupts container refs.
-    pcall(function() inst.content:resize(inst.contentW or 200, math.max(y + 4, viewportH)) end)
-    reportAutoFit(inst, y + 4)
+    inst.rowsH = y + 4
+    pcall(function() inst.content:resize(inst.contentW or 200, math.max(inst.rowsH, viewportH)) end)
+    inst._coveredH = math.max(inst.rowsH, viewportH)
+    reportAutoFit(inst, inst.rowsH)
+
+    -- reportAutoFit's pane grow/shrink lands async, and on a nested dock/tab
+    -- layout can take more than one tick to actually settle. A single
+    -- re-check (the previous approach) could still land before it did,
+    -- leaving the scrollbox's unstyled native background (white; Geyser.
+    -- ScrollBox has no working setStyleSheet) showing below the content for
+    -- however long it took. Keep re-covering for a few ticks until the
+    -- viewport height stops changing, instead of trusting one snapshot; the
+    -- recurring search poll below also calls recoverContentCoverage every
+    -- cycle as a standing safety net beyond that.
+    local epoch = inst.epoch
+    local lastH, ticksLeft = nil, 10
+    local function settle()
+        local i = instances[gid]
+        if not i or i.epoch ~= epoch then return end   -- a newer populate() has since run
+        recoverContentCoverage(i)
+        ticksLeft = ticksLeft - 1
+        if ticksLeft > 0 and i._coveredH ~= lastH then
+            lastH = i._coveredH
+            tempTimer(0, settle)
+        end
+    end
+    tempTimer(0, settle)
 
     -- New rows are visible by default regardless of parent hidden state, so
     -- re-assert hidden here or they'd flash visible on a condition-hidden pane.
@@ -676,8 +1121,10 @@ local function buildPanel(target)
     inst.scroll = Geyser.ScrollBox:new({ name = gid .. "_gx_scroll", x = 0, y = TOPBAR_FULL_H,
         width = "100%", height = "100%-" .. (TOPBAR_FULL_H + FOOTER_H) .. "px" }, C)
     pcall(function() inst.scroll:setStyleSheet(CSS_SCROLL) end)
-    -- Content fills the FULL scrollbox width; the 8px scrollbar overlaps only
-    -- the right edge (rows are left-anchored), so no white column is left uncovered.
+    -- Content fills the FULL scrollbox width; the scrollbar overlaps only the right
+    -- edge (rows are left-anchored), so no white column is left uncovered. Rows
+    -- themselves are narrower (see createRow's row_w) so their own text never
+    -- paints under that overlapped strip.
     inst.contentW = math.max(50, inst.scroll:get_width() or 220)
 
     -- Permanent state label (loading / empty) and the row container.
@@ -692,15 +1139,9 @@ local function buildPanel(target)
         { name = gid .. "_gx_content", x = 0, y = 0, width = inst.contentW, height = 2000 }, inst.scroll)
     inst.content:setStyleSheet(CSS_BG)
 
-    -- Footer legend
-    local footer = Geyser.Label:new(
-        { name = gid .. "_gx_foot", x = 0, y = "-" .. FOOTER_H, width = "100%", height = FOOTER_H }, C)
-    footer:setStyleSheet(CSS_HEADER)
-    local legend = Geyser.Label:new(
-        { name = gid .. "_gx_legend", x = "1%", y = 0, width = "98%", height = "100%" }, footer)
-    legend:setStyleSheet("background-color:transparent; color:rgba(160,160,170,190); font-size:9px;")
-    legend:echo(
-        "<center>🏛️ Syndicate&nbsp;&nbsp;&nbsp;🌌 Cartel&nbsp;&nbsp;&nbsp;⭐ System&nbsp;&nbsp;&nbsp;🌍 Planet</center>")
+    -- No footer legend: row-type and coverage-state meaning now live in each
+    -- icon/dot's own tooltip instead (see icon:setToolTip/dot:setToolTip in
+    -- createRow), so there's nothing left for a legend strip to explain.
 
     -- No-op until the scrape lands; f2t_galaxy_finish_capture re-runs this
     -- once data is ready, so an early-opened navigator still catches up.
@@ -728,6 +1169,10 @@ local function buildPanel(target)
                 if instances[gid] then populate(gid) end
             end)
         end
+        -- Standing safety net for the white-background gap: catches any
+        -- pane resize whose landing outlasts populate()'s own settle loop
+        -- (e.g. a slow dock/splitter reflow), not just search-driven ones.
+        recoverContentCoverage(i)
         tempTimer(0.4, poll)
     end
     tempTimer(0.4, poll)
@@ -790,8 +1235,12 @@ local function buildGalaxyDef()
         },
 
         apply = function(target)
+            -- Contained so a half-built panel can't take the whole workspace
+            -- restore with it, but reported loudly: Mux._applyContent reports
+            -- apply errors itself and this pcall hides them from it, so
+            -- debug-only logging here meant an empty pane and total silence.
             local ok, err = pcall(buildPanel, target)
-            if not ok and f2t_debug_log then f2t_debug_log("[galaxy] apply error: %s", tostring(err)) end
+            if not ok then Mux._err("galaxy apply error: %s", tostring(err)) end
         end,
 
         remove = function(target)
@@ -865,6 +1314,7 @@ end
 function f2tRegisterGalaxy()
     if not (Mux and Mux.registerContent) then return end
     Mux.registerContent("fed2_galaxy", buildGalaxyDef())
+    Mux.registerContent("f2t_galaxy_full_explore_confirm", fullExploreConfirmDef)
     -- Package (re)install re-enables all triggers; park the catch-all capture
     -- triggers unless a scrape is actually in flight.
     if not F2T_GALAXY.capture_active then setCaptureTriggers(false) end
@@ -890,6 +1340,21 @@ end)
 
 registerAnonymousEventHandler("f2tCharacterChanged", function()
     f2t_galaxy_schedule_scrape(3)
+end)
+
+-- Fires on every room move (including each hop of a speedwalk); keeps the
+-- orange current-location highlight tracking the player live instead of
+-- only refreshing on scrape/settings/search interactions. This also keeps
+-- coverage/POI state live as you explore, since populate() recomputes both
+-- fresh off the room DB every time - no separate cache to go stale.
+registerAnonymousEventHandler("gmcp.room.info", function()
+    f2t_galaxy_refresh_open()
+end)
+
+-- Bulk map changes (delete/clear, import) don't necessarily move the player,
+-- so they can't rely on gmcp.room.info to trigger a repaint.
+registerAnonymousEventHandler("f2tMapDataChanged", function()
+    f2t_galaxy_refresh_open()
 end)
 
 f2t_debug_log("[galaxy] module loaded")

@@ -15,6 +15,11 @@ function f2t_map_explore_navigate_to_next()
 
     if not next_exit then
         -- Exploration complete for this area
+        -- Leaving "navigating" so a same-room gmcp.room.info re-fire (another
+        -- player's ship arriving/leaving) can't walk this branch a second time.
+        if F2T_MAP_EXPLORE_STATE.phase ~= "navigating" then return end
+        F2T_MAP_EXPLORE_STATE.phase = "area_complete"
+
         if F2T_MAP_EXPLORE_STATE.brief_flags_remaining_count and
            F2T_MAP_EXPLORE_STATE.brief_flags_remaining_count > 0 then
             local planet_name = F2T_MAP_EXPLORE_STATE.brief_planet_name or "Unknown"
@@ -62,15 +67,11 @@ function f2t_map_explore_navigate_to_next()
 
     if current_room ~= next_exit.room_id then
         F2T_MAP_EXPLORE_STATE.planned_exit = next_exit
-        local success = f2t_map_navigate(tostring(next_exit.room_id))
+        local success = f2t_map_navigate_ok(f2t_map_navigate(tostring(next_exit.room_id)))
         if not success then
             cecho(string.format("\n<red>[map-explore]<reset> Failed to navigate to room %d\n", next_exit.room_id))
             F2T_MAP_EXPLORE_STATE.planned_exit = nil
-            lockExit(next_exit.room_id, next_exit.direction, true)
-            if not F2T_MAP_EXPLORE_STATE.temp_locked_exits[next_exit.room_id] then
-                F2T_MAP_EXPLORE_STATE.temp_locked_exits[next_exit.room_id] = {}
-            end
-            F2T_MAP_EXPLORE_STATE.temp_locked_exits[next_exit.room_id][next_exit.direction] = true
+            f2t_map_explore_temp_lock_exit(next_exit.room_id, next_exit.direction)
             tempTimer(0.5, function()
                 if F2T_MAP_EXPLORE_STATE.active then f2t_map_explore_next_step() end
             end)
@@ -80,9 +81,7 @@ function f2t_map_explore_navigate_to_next()
 
     F2T_MAP_EXPLORE_STATE.last_room_before_move     = current_room
     F2T_MAP_EXPLORE_STATE.last_direction_attempted  = next_exit.direction
-    speedWalkDir  = {next_exit.direction}
-    speedWalkPath = {nil}
-    doSpeedWalk()
+    f2t_map_speedwalk_send_blind({next_exit.direction})
 end
 
 function f2t_map_explore_return_to_start()
@@ -92,7 +91,7 @@ function f2t_map_explore_return_to_start()
 
     if current_room ~= starting_room then
         cecho("\n<green>[map-explore]<reset> Returning to starting room...\n")
-        local success = f2t_map_navigate(tostring(starting_room))
+        local success = f2t_map_navigate_ok(f2t_map_navigate(tostring(starting_room)))
         if not success then
             cecho(string.format("\n<red>[map-explore]<reset> Failed to return to starting room %d\n", starting_room))
             f2t_map_explore_complete()

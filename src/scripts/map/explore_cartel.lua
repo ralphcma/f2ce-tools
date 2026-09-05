@@ -7,7 +7,7 @@
 -- wherever the chain starts.
 
 F2T_MAP_EXPLORE_CARTEL_CAPTURE = F2T_MAP_EXPLORE_CARTEL_CAPTURE or {
-    active = false, cartel_name = nil, lines = {}, in_members = false, timer_id = nil,
+    active = false, cartel_name = nil, lines = {}, in_members = false,
 }
 
 function f2t_map_explore_cartel_start(cartel_name, on_complete_callback)
@@ -28,6 +28,22 @@ function f2t_map_explore_cartel_start(cartel_name, on_complete_callback)
 
     cartel_name = cartel_name:gsub("^%l", string.upper)
 
+    -- A standalone run (typed directly, or the Galaxy Navigator's dot click -
+    -- both just expand to this same call) can be a long, many-system sweep
+    -- from a single click with no chance to back out. A cartel nested under
+    -- a syndicate/galaxy sweep already got its one confirmation at that
+    -- larger run's own start and shouldn't ask again per cartel.
+    if not on_complete_callback and f2tShowExploreScopeConfirm then
+        f2tShowExploreScopeConfirm("cartel", cartel_name,
+            function() f2t_map_explore_cartel_start_confirmed(cartel_name, on_complete_callback) end,
+            function() cecho("\n<yellow>[map-explore]<reset> Cartel exploration cancelled\n") end)
+        return true
+    end
+
+    return f2t_map_explore_cartel_start_confirmed(cartel_name, on_complete_callback)
+end
+
+function f2t_map_explore_cartel_start_confirmed(cartel_name, on_complete_callback)
     cecho(string.format("\n<green>[map-explore]<reset> Starting cartel exploration: <white>%s<reset>\n", cartel_name))
     cecho("  <dim_grey>Capturing system list...<reset>\n")
 
@@ -63,18 +79,16 @@ function f2t_map_explore_cartel_start(cartel_name, on_complete_callback)
 end
 
 function f2t_map_explore_cartel_capture_start(cartel_name)
+    f2t_capture_close("cartel_roster")
     F2T_MAP_EXPLORE_CARTEL_CAPTURE = {
-        active = true, cartel_name = cartel_name, lines = {}, in_members = false, timer_id = nil,
+        active = true, cartel_name = cartel_name, lines = {}, in_members = false,
     }
     send(string.format("display cartel %s", cartel_name), false)
     f2t_map_explore_cartel_reset_timer()
 end
 
 function f2t_map_explore_cartel_reset_timer()
-    if F2T_MAP_EXPLORE_CARTEL_CAPTURE.timer_id then
-        killTimer(F2T_MAP_EXPLORE_CARTEL_CAPTURE.timer_id)
-    end
-    F2T_MAP_EXPLORE_CARTEL_CAPTURE.timer_id = tempTimer(0.5, function()
+    f2t_capture_arm("cartel_roster", function()
         if F2T_MAP_EXPLORE_CARTEL_CAPTURE.active then
             f2t_map_explore_cartel_capture_complete()
         end
@@ -84,6 +98,7 @@ end
 function f2t_map_explore_cartel_capture_complete()
     local system_names = F2T_MAP_EXPLORE_CARTEL_CAPTURE.lines
     local cartel_name = F2T_MAP_EXPLORE_CARTEL_CAPTURE.cartel_name
+    f2t_capture_close("cartel_roster")
     F2T_MAP_EXPLORE_CARTEL_CAPTURE = {active = false}
 
     if #system_names == 0 then
@@ -95,18 +110,9 @@ function f2t_map_explore_cartel_capture_complete()
     -- The roster is the authoritative accepted-member list: feed the model.
     local topology_changed = false
     for _, system_name in ipairs(system_names) do
-        if F2T_MAP_TOPOLOGY.systems[system_name] ~= cartel_name then
-            F2T_MAP_TOPOLOGY.systems[system_name] = cartel_name
-            topology_changed = true
-        end
+        if f2t_map_topology_learn(system_name, cartel_name, nil) then topology_changed = true end
     end
-    if topology_changed then
-        if F2T_MAP_TOPOLOGY.cartels[cartel_name] == nil then
-            F2T_MAP_TOPOLOGY.cartels[cartel_name] = false
-        end
-        f2t_map_topology_save()
-        f2t_map_topology_request_rebuild()
-    end
+    f2t_map_topology_commit(topology_changed)
 
     table.sort(system_names, function(a, b)
         if a == cartel_name then return true end
@@ -148,54 +154,22 @@ function f2t_map_explore_cartel_next_system()
     cecho(string.format("\n<green>[map-explore]<reset> System %d/%d: <white>%s<reset>\n",
         index, #systems, system_name))
 
-    if f2t_map_explore_is_system_fully_mapped(system_name) then
-        cecho("  <green>System already fully mapped, skipping<reset>\n")
-        F2T_MAP_EXPLORE_STATE.cartel_stats.systems_explored =
-            F2T_MAP_EXPLORE_STATE.cartel_stats.systems_explored + 1
-        f2t_map_explore_cartel_next_system()
-        return
-    end
-
-    local current_room = F2T_MAP_CURRENT_ROOM_ID
-    local current_system = current_room and getRoomUserData(current_room, "fed2_system")
-
-    local function on_system_reached()
-        F2T_MAP_EXPLORE_STATE.cartel_stats.systems_explored =
-            F2T_MAP_EXPLORE_STATE.cartel_stats.systems_explored + 1
-        f2t_map_explore_cartel_start_system_mode(system_name)
-    end
-    local function on_system_unreachable()
-        cecho(string.format("  <red>Error:<reset> Could not reach %s, skipping\n", system_name))
-        f2t_map_explore_cartel_next_system()
-    end
-
-    if current_system == system_name then
-        local space_area_name = f2t_map_get_system_space_area_actual(system_name)
-        local space_area_id = space_area_name and f2t_map_get_area_id(space_area_name)
-        if space_area_id and getRoomArea(current_room) == space_area_id then
-            on_system_reached()
-        else
-            -- In the right system but on a planet: get to its space link first
-            -- (a plain walk, not a jump - reuse the same arrival verification).
-            -- Navigate by room ID, not by re-guessing system_name through the
-            -- generic name resolver - see f2t_map_area_entry_room().
-            cecho(string.format("  <dim_grey>Navigating to %s space...<reset>\n", system_name))
-            f2t_map_explore_await_arrival("system", system_name, on_system_reached, on_system_unreachable)
-            local target_room_id = f2t_map_area_entry_room(space_area_id)
-            local nav_result = target_room_id and f2t_map_navigate(tostring(target_room_id))
-            if nav_result == nil then
-                cecho(string.format("  <red>Error:<reset> Cannot navigate to %s space link, skipping\n", system_name))
-                f2t_map_explore_travel_finish(false)
-            end
-        end
-        return
-    end
-
-    -- Different system: jump-chain travel handles cross-cartel/cross-syndicate legality.
-    f2t_map_explore_travel_to("system", system_name, on_system_reached, on_system_unreachable)
+    -- No travel here (there used to be one): f2t_map_explore_system_start
+    -- below already owns the whole decision, checking against a freshly
+    -- captured 'di system' roster (not a local-only guess - see the fix in
+    -- f2t_map_explore_is_system_fully_mapped for why a local check can be
+    -- blind to a planet with zero rooms at all) before it ever travels, and
+    -- skips travelling entirely when every expected planet is already
+    -- mapped, reachable, and fully flagged. Jumping first here, like the
+    -- old code did, would burn the travel on every system regardless,
+    -- since by the time system_start got a look the sweep had already
+    -- arrived.
+    f2t_map_explore_cartel_start_system_mode(system_name)
 end
 
 function f2t_map_explore_cartel_start_system_mode(system_name)
+    F2T_MAP_EXPLORE_STATE.cartel_stats.systems_explored =
+        F2T_MAP_EXPLORE_STATE.cartel_stats.systems_explored + 1
     local success = f2t_map_explore_system_start("brief", system_name, function()
         f2t_map_explore_cartel_next_system()
     end)

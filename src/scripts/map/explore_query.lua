@@ -1,9 +1,7 @@
 -- f2ce-tools map — exploration query functions (ported from map_explore_query.lua)
 
 function f2t_map_explore_has_unlocked_stubs(area_id)
-    local rooms_in_area = getAreaRooms(area_id)
-    if not rooms_in_area then return false end
-    for _, room_id in pairs(rooms_in_area) do
+    for _, room_id in ipairs(f2t_map_area_room_list(area_id)) do
         local stubs = getExitStubs(room_id)
         if stubs then
             for _, stub_dir_num in pairs(stubs) do
@@ -16,10 +14,8 @@ function f2t_map_explore_has_unlocked_stubs(area_id)
 end
 
 function f2t_map_explore_planet_has_flags(area_id, required_flags)
-    local rooms_in_area = getAreaRooms(area_id)
-    if not rooms_in_area then return false end
     local found_flags = {}
-    for _, room_id in pairs(rooms_in_area) do
+    for _, room_id in ipairs(f2t_map_area_room_list(area_id)) do
         for _, flag in ipairs(required_flags) do
             if not found_flags[flag] then
                 if getRoomUserData(room_id, string.format("fed2_flag_%s", flag)) == "true" then
@@ -71,15 +67,23 @@ function f2t_map_explore_is_system_fully_mapped(system_name)
     if not space_area_id then return false end
     if f2t_map_explore_has_unlocked_stubs(space_area_id) then return false end
 
+    local seen = {}
     local orbit_rooms = {}
-    local rooms_in_area = getAreaRooms(space_area_id)
-    for _, room_id in pairs(rooms_in_area) do
+    for _, room_id in ipairs(f2t_map_area_room_list(space_area_id)) do
         local planet = getRoomUserData(room_id, "fed2_planet")
-        if planet then
+        if planet and planet ~= "" and not seen[planet] then
+            seen[planet] = true
             local planet_area_id = f2t_map_get_area_id(planet)
-            if planet_area_id then
-                table.insert(orbit_rooms, {name = planet, area_id = planet_area_id})
-            end
+            -- A planet only known from orbit, with no surface area created
+            -- yet, has definitely not been explored - silently dropping it
+            -- here (the old behavior) is how a system with one could get
+            -- reported "fully mapped" while a real, never-visited planet
+            -- sat in it. This is why cartel sweeps were skipping hub
+            -- systems: hubs get incidentally seen in space (heavy jump
+            -- traffic) far more than their planets get deliberately landed
+            -- on, so they hit this exact gap more than ordinary members do.
+            if not planet_area_id then return false end
+            table.insert(orbit_rooms, {name = planet, area_id = planet_area_id})
         end
     end
     if #orbit_rooms == 0 then return false end
