@@ -11,7 +11,7 @@ if type(existing) == "table" and type(existing._reload) == "function" then
 end
 
 local API = {
-    _build = "1.0.0-candidate.2",
+    _build = "1.0.0-candidate.3",
     version = "1.0.0",
     f2ce_version = "unknown",
     capabilities = {},
@@ -370,7 +370,11 @@ local function release_nav_lease(reason)
     if not lease then return end
     navigation._lease = nil
     lease.active = false
-    if API._adapter and API._adapter.navClearOwner then safe_call("clear navigation owner", API._adapter.navClearOwner) end
+    if API._adapter and API._adapter.navReleaseOwner then
+        safe_call("release navigation owner", API._adapter.navReleaseOwner, lease.native_owner)
+    elseif API._adapter and API._adapter.navClearOwner then
+        safe_call("clear navigation owner", API._adapter.navClearOwner)
+    end
     API.events.emit("navigation.lease_released", { module_id = lease.module_id, lease_id = lease.id, reason = reason })
 end
 
@@ -389,6 +393,18 @@ local function finish_navigation(state, reason, detail)
     release_nav_lease(reason or state)
 end
 
+local function interrupt_navigation(lease, reason)
+    if navigation._lease ~= lease then return nil end
+    local request = navigation._request
+    if not request or request.finished then return nil end
+    request.public.interruption_reason = reason or "interrupted"
+    API.events.emit("navigation.interrupted", request.public)
+    local ok, response = safe_call("navigation interruption", request.on_interrupt, readonly_copy(request.public))
+    if ok and type(response) == "table" and response.auto_resume then return { auto_resume = true } end
+    finish_navigation("failed", reason or "interrupted")
+    return response
+end
+
 local Lease = {}
 Lease.__index = Lease
 function Lease:_valid()
@@ -405,6 +421,7 @@ function Lease:request(destination, options)
         public = { request_id = handle.id, lease_id = self.id, module_id = self.module_id, destination = destination, state = "starting", started_at = os.time() },
         on_complete = options.on_complete,
         on_failure = options.on_failure,
+        on_interrupt = options.on_interrupt,
         finished = false,
     }
     navigation._request = request
@@ -413,28 +430,59 @@ function Lease:request(destination, options)
     function handle:resume() return navigation.resume(self) end
     function handle:cancel(reason) return navigation.cancel(self, false, reason) end
     function handle:cancelImmediate(reason) return navigation.cancel(self, true, reason) end
-    local function interrupted(reason)
-        if request.finished then return nil end
-        request.public.interruption_reason = reason or "interrupted"
-        API.events.emit("navigation.interrupted", request.public)
-        local ok, response = safe_call("navigation interruption", options.on_interrupt, readonly_copy(request.public))
-        if ok and type(response) == "table" and response.auto_resume then return { auto_resume = true } end
-        finish_navigation("failed", reason or "interrupted")
-        return response
+    local function native_result(success, status)
+        if request.finished then return end
+        if status == nil then
+            if success then finish_navigation("completed", "arrived")
+            else finish_navigation("failed", "unmapped_or_unreachable") end
+            return
+        end
+        request.public.native_status = status
+        if status == "arrived" then
+            finish_navigation("completed", "arrived")
+        elseif status == "failed" then
+            finish_navigation("failed", "unmapped_or_unreachable")
+        elseif status == "walking" then
+            request.public.state = "running"
+        elseif status == "pending" then
+            request.public.state = "pending"
+        elseif success == false then
+            finish_navigation("failed", tostring(status))
+        end
     end
-    if API._adapter.navSetOwner then API._adapter.navSetOwner("api:" .. self.module_id .. ":" .. self.id, interrupted) end
-    local ok, result, err = pcall(API._adapter.navigate, destination, { suppress_hint = options.suppress_hint, on_result = function(success)
-        if success then finish_navigation("completed", "arrived") else finish_navigation("failed", "unmapped_or_unreachable") end
-    end })
-    if not ok then finish_navigation("failed", "adapter_error", result); return nil, api_error("E_NAV_START", tostring(result)) end
-    if result == false then finish_navigation("failed", "unmapped_or_unreachable", err); return nil, api_error("E_NAV_START", "F2CE navigation rejected destination", { detail = err }) end
-    request.public.state = "running"
+    local ok, result, err = pcall(API._adapter.navigate, destination, {
+        suppress_hint = options.suppress_hint,
+        interactive = options.interactive == true,
+        compensate_incomplete_map = options.compensate_incomplete_map == true,
+        on_result = native_result,
+    })
+    if not ok then
+        finish_navigation("failed", "adapter_error", result)
+        return nil, api_error("E_NAV_START", tostring(result))
+    end
+    if request.finished then
+        if request.public.state == "completed" then return handle end
+        return nil, api_error("E_NAV_START", "F2CE navigation rejected destination", { detail = request.public.detail })
+    end
+    if result == false or result == "failed" then
+        finish_navigation("failed", "unmapped_or_unreachable", err)
+        return nil, api_error("E_NAV_START", "F2CE navigation rejected destination", { detail = err })
+    end
+    if result ~= true and result ~= nil and result ~= "walking" and result ~= "arrived" and result ~= "pending" then
+        finish_navigation("failed", "invalid_adapter_result", result)
+        return nil, api_error("E_NAV_START", "navigation adapter returned an unknown status", { status = result })
+    end
+    request.public.native_status = type(result) == "string" and result or nil
+    request.public.state = (result == "pending" or result == nil) and "pending" or "running"
     API.events.emit("navigation.started", request.public)
+    if result == "arrived" then finish_navigation("completed", "arrived"); return handle end
     navigation._tick()
     return handle
 end
 function Lease:release(reason)
-    if navigation._request and navigation._request.handle.lease_id == self.id then return nil, api_error("E_NAV_BUSY", "cancel active request before releasing lease") end
+    if navigation._request and navigation._request.handle.lease_id == self.id then
+        return nil, api_error("E_NAV_BUSY", "cancel active request before releasing lease")
+    end
     if navigation._lease == self then release_nav_lease(reason or "released") end
     return true
 end
@@ -442,11 +490,46 @@ end
 function navigation.acquire(context, options)
     local ok, err = require_live_context(context)
     if not ok then return nil, err end
-    if navigation._lease then return nil, api_error("E_NAV_CONTENTION", "navigation lease is owned", { owner = navigation._lease.module_id }) end
-    if API.commands._lease then return nil, api_error("E_COMMAND_CONTENTION", "command broker is leased; navigation cannot start", { owner = API.commands._lease.module_id }) end
-    local lease = setmetatable({ id = next_id("nav-lease"), module_id = context.module_id, active = true, metadata = readonly_copy(options) }, Lease)
+    if navigation._lease then
+        return nil, api_error("E_NAV_CONTENTION", "navigation lease is owned", {
+            owner = navigation._lease.module_id,
+        })
+    end
+    if API.commands._lease then
+        return nil, api_error("E_COMMAND_CONTENTION", "command broker is leased; navigation cannot start", {
+            owner = API.commands._lease.module_id,
+        })
+    end
+    local lease = setmetatable({
+        id = next_id("nav-lease"),
+        module_id = context.module_id,
+        active = true,
+        metadata = readonly_copy(options),
+    }, Lease)
+    lease.native_owner = "api:" .. context.module_id .. ":" .. lease.id
+    local function interrupted(reason) return interrupt_navigation(lease, reason) end
+    local claimed, detail
+    if API._adapter and API._adapter.navAcquireOwner then
+        local call_ok
+        call_ok, claimed, detail = pcall(API._adapter.navAcquireOwner, lease.native_owner, interrupted)
+        if not call_ok then claimed, detail = false, claimed end
+    elseif API._adapter and API._adapter.navSetOwner then
+        local call_ok
+        call_ok, claimed, detail = pcall(API._adapter.navSetOwner, lease.native_owner, interrupted)
+        if not call_ok then claimed, detail = false, claimed end
+    else
+        return nil, api_error("E_CAPABILITY", "navigation ownership adapter unavailable")
+    end
+    if claimed ~= true then
+        lease.active = false
+        return nil, api_error("E_NAV_CONTENTION", "native navigation is already owned or active", { blocker = detail })
+    end
     navigation._lease = lease
-    API.events.emit("navigation.lease_acquired", { module_id = lease.module_id, lease_id = lease.id, metadata = lease.metadata })
+    API.events.emit("navigation.lease_acquired", {
+        module_id = lease.module_id,
+        lease_id = lease.id,
+        metadata = lease.metadata,
+    })
     return lease
 end
 
@@ -487,13 +570,21 @@ function navigation._tick()
         finish_navigation("cancelled", request.cancel_requested)
         return
     end
+    if API._adapter and API._adapter.navDestinationReached then
+        local ok, reached = pcall(API._adapter.navDestinationReached, request.public.destination)
+        if ok and reached then finish_navigation("completed", "arrived"); return end
+    end
     local state = API._adapter and API._adapter.navState and API._adapter.navState() or nil
     if not state then return end
+    request.public.progress = readonly_copy(state)
     if state.active then
-        request.public.state = state.paused and "paused" or "running"
-        request.public.progress = readonly_copy(state)
-    elseif state.result == "completed" then finish_navigation("completed", "arrived", state)
-    elseif state.result == "failed" or state.result == "stopped" then finish_navigation("failed", state.reason or state.result, state) end
+        request.public.state = state.paused and "paused"
+            or (request.public.native_status == "pending" and "pending" or "running")
+    elseif request.public.native_status ~= "pending" and state.result == "completed" then
+        finish_navigation("completed", "arrived", state)
+    elseif request.public.native_status ~= "pending" and (state.result == "failed" or state.result == "stopped") then
+        finish_navigation("failed", state.reason or state.result, state)
+    end
 end
 
 function navigation._revokeModule(module_id, reason)
@@ -506,12 +597,27 @@ end
 API.commands = { _lease = nil, _audit = {}, _limit = 500 }
 local commands = API.commands
 local CommandLease = {}; CommandLease.__index = CommandLease
+
+function commands._nativeBlocker()
+    if not API._adapter or not API._adapter.nativeCommandBlocker then return nil end
+    local ok, blocker = pcall(API._adapter.nativeCommandBlocker)
+    if ok then return blocker end
+    return { kind = "adapter_error", detail = tostring(blocker) }
+end
+
 function CommandLease:_valid()
     return self.active and commands._lease == self and API._modules[self.module_id] and API._modules[self.module_id].state == "enabled"
 end
 function CommandLease:send(command, metadata)
     metadata = metadata or {}
-    local entry = { id = next_id("command"), module_id = self.module_id, lease_id = self.id, command = tostring(command or ""), metadata = readonly_copy(metadata), timestamp = os.time() }
+    local entry = {
+        id = next_id("command"),
+        module_id = self.module_id,
+        lease_id = self.id,
+        command = tostring(command or ""),
+        metadata = readonly_copy(metadata),
+        timestamp = os.time(),
+    }
     if not self:_valid() then
         entry.status = "denied"; entry.reason = "inactive_or_disabled"; commands._record(entry)
         return nil, api_error("E_COMMAND_LEASE", "active command lease is required")
@@ -519,6 +625,16 @@ function CommandLease:send(command, metadata)
     if entry.command == "" or type(metadata.reason) ~= "string" or metadata.reason == "" then
         entry.status = "denied"; entry.reason = "missing_command_or_reason"; commands._record(entry)
         return nil, api_error("E_COMMAND_METADATA", "command and metadata.reason are required")
+    end
+    local blocker = commands._nativeBlocker()
+    if blocker then
+        entry.status = "denied"
+        entry.reason = "native_automation_active"
+        entry.blocker = readonly_copy(blocker)
+        commands._record(entry)
+        return nil, api_error("E_COMMAND_CONTENTION", "native automation became active; command denied", {
+            blocker = blocker,
+        })
     end
     if not API._adapter or not API._adapter.sendCommand then return nil, api_error("E_CAPABILITY", "command transport unavailable") end
     local ok, result = pcall(API._adapter.sendCommand, entry.command, { echo = metadata.echo == true })
@@ -543,9 +659,26 @@ end
 function commands.audit() return readonly_copy(commands._audit) end
 function commands.acquire(context, metadata)
     local ok, err = require_live_context(context); if not ok then return nil, err end
-    if commands._lease then return nil, api_error("E_COMMAND_CONTENTION", "command broker is leased", { owner = commands._lease.module_id }) end
-    if API.navigation._lease then return nil, api_error("E_NAV_CONTENTION", "navigation is leased; arbitrary commands are denied", { owner = API.navigation._lease.module_id }) end
-    local lease = setmetatable({ id = next_id("command-lease"), module_id = context.module_id, active = true, metadata = readonly_copy(metadata) }, CommandLease)
+    if commands._lease then
+        return nil, api_error("E_COMMAND_CONTENTION", "command broker is leased", {
+            owner = commands._lease.module_id,
+        })
+    end
+    if API.navigation._lease then
+        return nil, api_error("E_NAV_CONTENTION", "navigation is leased; arbitrary commands are denied", {
+            owner = API.navigation._lease.module_id,
+        })
+    end
+    local blocker = commands._nativeBlocker()
+    if blocker then
+        return nil, api_error("E_COMMAND_CONTENTION", "native automation is active", { blocker = blocker })
+    end
+    local lease = setmetatable({
+        id = next_id("command-lease"),
+        module_id = context.module_id,
+        active = true,
+        metadata = readonly_copy(metadata),
+    }, CommandLease)
     commands._lease = lease
     API.events.emit("command.lease_acquired", { module_id = lease.module_id, lease_id = lease.id, metadata = lease.metadata })
     return lease
@@ -629,6 +762,14 @@ local function try_provider(request)
     end
     if provider.builtin then
         if not API._adapter or not API._adapter.priceCheck then return done(nil, "built-in provider unavailable") end
+        local blocker = commands._nativeBlocker()
+        if blocker then
+            return done(nil, api_error(
+                "E_COMMAND_CONTENTION",
+                "native automation became active; built-in price command denied",
+                { blocker = blocker }
+            ))
+        end
         commands._record({
             id = next_id("command"), module_id = request.module_id, lease_id = request.command_lease.id,
             command = API._adapter.priceCommandDescription and API._adapter.priceCommandDescription(request.commodity) or "f2t_price_check_commodity",
@@ -707,16 +848,36 @@ end
 function hauling.start(context, options)
     local ok, err = require_live_context(context); if not ok then return nil, err end
     options = options or {}; local mode = options.mode or "auto"
-    if mode ~= "auto" and mode ~= "exchange" then return nil, api_error("E_HAUL_MODE", "only rank-aware auto and exchange override are stable API modes") end
-    if hauling._owner then return nil, api_error("E_HAUL_BUSY", "hauling is already API-owned", { owner = hauling._owner }) end
+    if mode ~= "auto" and mode ~= "exchange" then
+        return nil, api_error("E_HAUL_MODE", "only rank-aware auto and exchange override are stable API modes")
+    end
+    if hauling._owner then
+        return nil, api_error("E_HAUL_BUSY", "hauling is already API-owned", { owner = hauling._owner })
+    end
+    local current = hauling.status()
+    if current.active then return nil, api_error("E_HAUL_BUSY", "native hauling is already active") end
     if navigation._lease then return nil, api_error("E_NAV_CONTENTION", "navigation is leased by another module") end
-    local command_lease; command_lease, err = commands.acquire(context, { service = "hauling" }); if not command_lease then return nil, err end
-    if not API._adapter or not API._adapter.haulingStart then command_lease:release("unavailable"); return nil, api_error("E_CAPABILITY", "hauling adapter unavailable") end
+    local command_lease
+    command_lease, err = commands.acquire(context, { service = "hauling" })
+    if not command_lease then return nil, err end
+    if not API._adapter or not API._adapter.haulingStart then
+        command_lease:release("unavailable")
+        return nil, api_error("E_CAPABILITY", "hauling adapter unavailable")
+    end
     hauling._owner, hauling._command_lease = context.module_id, command_lease
-    local accepted, detail = API._adapter.haulingStart(mode == "exchange" and "exchange" or nil)
-    if accepted == false then hauling._owner = nil; command_lease:release("start_rejected"); hauling._command_lease = nil; return nil, api_error("E_HAUL_START", detail or "hauling start rejected") end
+    local call_ok, accepted, detail = pcall(API._adapter.haulingStart, mode == "exchange" and "exchange" or nil)
+    if not call_ok or accepted ~= true then
+        hauling._owner = nil; command_lease:release("start_rejected"); hauling._command_lease = nil
+        return nil, api_error("E_HAUL_START", call_ok and (detail or "hauling start rejected") or tostring(accepted))
+    end
     API.events.emit("hauling.started", { module_id = context.module_id, mode = mode, status = hauling.status() })
-    return { status = hauling.status, pause = hauling.pause, resume = hauling.resume, cancel = hauling.stop, cancelImmediate = hauling.terminate }
+    return {
+        status = hauling.status,
+        pause = hauling.pause,
+        resume = hauling.resume,
+        cancel = hauling.stop,
+        cancelImmediate = hauling.terminate,
+    }
 end
 function hauling.pause(immediate) if not hauling._owner then return nil, api_error("E_HAUL_STATE", "hauling is not API-owned") end; return API._adapter.haulingPause(immediate == true) end
 function hauling.resume() if not hauling._owner then return nil, api_error("E_HAUL_STATE", "hauling is not API-owned") end; return API._adapter.haulingResume() end
@@ -761,10 +922,15 @@ function API._install(adapter)
     if type(adapter) ~= "table" then return nil, api_error("E_ADAPTER", "adapter table is required") end
     API._adapter = adapter
     API.f2ce_version = tostring(adapter.f2ceVersion and adapter.f2ceVersion() or "unknown")
+    local v33 = compare_versions(API.f2ce_version, "3.3.0")
+    local navigation_available = type(adapter.navigate) == "function"
+        and (type(adapter.navAcquireOwner) == "function" or type(adapter.navSetOwner) == "function")
     capability("modules", true, "v1 scoped lifecycle")
     capability("events", true, "normalized copied payloads")
-    capability("navigation", type(adapter.navigate) == "function", adapter.name)
+    capability("navigation", navigation_available, adapter.name)
+    capability("navigation.status.v33", v33 ~= nil and v33 >= 0, "explicit walking/arrived/pending/failed statuses")
     capability("commands", type(adapter.sendCommand) == "function", adapter.name)
+    capability("commands.native_contention", type(adapter.nativeCommandBlocker) == "function", adapter.name)
     capability("gmcp.snapshots", type(adapter.gmcpSnapshot) == "function", adapter.name)
     capability("prices.providers", type(adapter.priceCheck) == "function", adapter.name)
     capability("hauling", type(adapter.haulingStart) == "function", adapter.name)

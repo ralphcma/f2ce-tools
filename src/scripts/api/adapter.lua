@@ -6,8 +6,6 @@
 local api = F2CE and F2CE.API and F2CE.API.v1
 if not api then return end
 
-local unpack_values = table.unpack or unpack
-
 local function clone(value, seen)
     if type(value) ~= "table" then return value end
     seen = seen or {}
@@ -22,7 +20,7 @@ local repeating_timers = {}
 
 local adapter = {
     name = "f2ce-native",
-    compatibility = "F2CE-Tools >= 3.2.5",
+    compatibility = "F2CE-Tools 3.3.x (legacy fallback >= 3.2.5)",
 }
 
 function adapter.f2ceVersion()
@@ -88,15 +86,77 @@ function adapter.gmcpSnapshot(path)
     return clone(node)
 end
 
+local function active(state)
+    return type(state) == "table" and state.active == true
+end
+
+function adapter.nativeCommandBlocker()
+    if F2T_SPEEDWALK_OWNER ~= nil then
+        return { kind = "navigation_owner", owner = tostring(F2T_SPEEDWALK_OWNER) }
+    end
+    if F2T_SPEEDWALK_ACTIVE == true then return { kind = "speedwalk" } end
+    if active(F2T_MAP_EXPLORE_STATE) then return { kind = "map_exploration" } end
+    if active(F2T_MAP_CIRCUIT_STATE) then return { kind = "map_circuit" } end
+    if active(F2T_HAULING_STATE) then return { kind = "hauling" } end
+    if active(F2T_DEATH_STATE) then return { kind = "death_recovery" } end
+    if F2T_PRICE_CAPTURE_ACTIVE == true then return { kind = "price_capture" } end
+    if active(F2T_BULK_STATE) then return { kind = "bulk_trade" } end
+    if active(F2T_MAP_WHEREIS_CAPTURE) then return { kind = "whereis_capture" } end
+    if active(F2T_MAP_DI_SYSTEM_CAPTURE) then return { kind = "system_capture" } end
+    if active(F2T_MAP_TOPOLOGY_CAPTURE) then return { kind = "topology_capture" } end
+    if type(F2T_GALAXY) == "table" and F2T_GALAXY.capture_active == true then
+        return { kind = "galaxy_capture" }
+    end
+    if type(f2t_factory) == "table" and f2t_factory.capturing == true then
+        return { kind = "factory_capture" }
+    end
+    if type(f2t_po) == "table" and f2t_po.phase and f2t_po.phase ~= "idle" then
+        return { kind = "planet_owner_capture", phase = tostring(f2t_po.phase) }
+    end
+    return nil
+end
+
+function adapter.navAcquireOwner(owner, on_interrupt)
+    if type(f2t_map_set_nav_owner) ~= "function" then
+        return false, { kind = "unavailable", operation = "f2t_map_set_nav_owner" }
+    end
+    local blocker = adapter.nativeCommandBlocker()
+    if blocker and not (blocker.kind == "navigation_owner" and blocker.owner == tostring(owner)) then
+        return false, blocker
+    end
+    f2t_map_set_nav_owner(owner, on_interrupt)
+    if F2T_SPEEDWALK_OWNER ~= owner then
+        return false, { kind = "ownership_not_acquired", owner = F2T_SPEEDWALK_OWNER }
+    end
+    return true
+end
+
+function adapter.navReleaseOwner(owner)
+    if F2T_SPEEDWALK_OWNER == nil then return true end
+    if F2T_SPEEDWALK_OWNER ~= owner then
+        return false, { kind = "ownership_changed", owner = tostring(F2T_SPEEDWALK_OWNER) }
+    end
+    if type(f2t_map_clear_nav_owner) ~= "function" then return false end
+    f2t_map_clear_nav_owner()
+    return true
+end
+
+-- Retained for adapters embedding the candidate. New API code uses the
+-- compare-and-release operations above so it cannot clobber another owner.
 function adapter.navSetOwner(owner, on_interrupt)
-    if type(f2t_map_set_nav_owner) == "function" then f2t_map_set_nav_owner(owner, on_interrupt); return true end
+    return adapter.navAcquireOwner(owner, on_interrupt)
+end
+function adapter.navClearOwner()
+    if F2T_SPEEDWALK_OWNER == nil then return true end
     return false
 end
-function adapter.navClearOwner() if type(f2t_map_clear_nav_owner) == "function" then f2t_map_clear_nav_owner(); return true end; return false end
 function adapter.navigate(destination, options)
     if type(f2t_map_navigate) ~= "function" then return false, "f2t_map_navigate is unavailable" end
+    -- A 3.3 pending navigation may perform several internal speedwalks. Clear
+    -- the previous run before starting so API consumers never observe it as
+    -- the result of this request.
+    F2T_SPEEDWALK_LAST_RESULT = nil
     local result, detail = f2t_map_navigate(destination, options)
-    if result == nil then F2T_SPEEDWALK_LAST_RESULT = nil end
     return result, detail
 end
 function adapter.navPause() return type(f2t_map_speedwalk_pause) == "function" and f2t_map_speedwalk_pause() or false end
@@ -107,11 +167,21 @@ function adapter.navState()
         active = F2T_SPEEDWALK_ACTIVE == true,
         paused = F2T_SPEEDWALK_PAUSED == true,
         result = F2T_SPEEDWALK_LAST_RESULT,
+        owner = F2T_SPEEDWALK_OWNER,
+        exploring = active(F2T_MAP_EXPLORE_STATE),
+        circuit_active = active(F2T_MAP_CIRCUIT_STATE),
         destination_room_id = tonumber(F2T_SPEEDWALK_DESTINATION_ROOM_ID),
         current_step = tonumber(F2T_SPEEDWALK_CURRENT_STEP) or 0,
         total_steps = type(F2T_SPEEDWALK_DIR) == "table" and #F2T_SPEEDWALK_DIR or 0,
         interruption_pending = F2T_SPEEDWALK_CUSTOMS_PENDING == true,
     }
+end
+
+function adapter.navDestinationReached(destination)
+    if type(f2t_map_resolve_location) ~= "function" then return false end
+    local target_id = f2t_map_resolve_location(destination)
+    return target_id ~= nil
+        and tonumber(F2T_MAP_CURRENT_ROOM_ID) == tonumber(target_id)
 end
 
 function adapter.priceCheck(commodity, options, done)
@@ -136,9 +206,13 @@ function adapter.haulingStatus()
     return state
 end
 function adapter.haulingStart(mode)
-    if type(f2t_hauling_start) ~= "function" then return false, "f2t_hauling_start is unavailable" end
+    if type(f2t_hauling_start) ~= "function" then
+        return false, "f2t_hauling_start is unavailable"
+    end
+    if active(F2T_HAULING_STATE) then return false, "hauling is already active" end
     f2t_hauling_start(mode)
-    return true
+    if active(F2T_HAULING_STATE) then return true end
+    return false, "native hauling start was rejected"
 end
 function adapter.haulingPause(immediate) if type(f2t_hauling_pause) ~= "function" then return false end; f2t_hauling_pause(immediate); return true end
 function adapter.haulingResume() if type(f2t_hauling_resume) ~= "function" then return false end; f2t_hauling_resume(); return true end

@@ -25,6 +25,9 @@ local function reset()
         muxletContentAvailable = function(...) return mock:muxletContentAvailable(...) end,
         sendCommand = function(...) return mock:sendCommand(...) end,
         gmcpSnapshot = function(...) return mock:gmcpSnapshot(...) end,
+        nativeCommandBlocker = function(...) return mock:nativeCommandBlocker(...) end,
+        navAcquireOwner = function(...) return mock:navAcquireOwner(...) end,
+        navReleaseOwner = function(...) return mock:navReleaseOwner(...) end,
         navSetOwner = function(...) return mock:navSetOwner(...) end,
         navClearOwner = function(...) return mock:navClearOwner(...) end,
         navigate = function(...) return mock:navigate(...) end,
@@ -32,6 +35,7 @@ local function reset()
         navResume = function(...) return mock:navResume(...) end,
         navStop = function(...) return mock:navStop(...) end,
         navState = function(...) return mock:navState(...) end,
+        navDestinationReached = function(...) return mock:navDestinationReached(...) end,
         priceCheck = function(...) return mock:priceCheck(...) end,
         priceCommandDescription = function(...) return mock:priceCommandDescription(...) end,
         haulingStatus = function(...) return mock:haulingStatus(...) end,
@@ -60,10 +64,31 @@ function tests.version_and_capability_failure()
     reset()
     equal(API.integration.ui.provider, "Muxlet")
     truthy(not API.hasCapability("muxlet.content"))
+    truthy(API.hasCapability("navigation.status.v33"))
+    truthy(API.hasCapability("commands.native_contention"))
     truthy(API.versions.satisfies("1.2.3", ">=1.0.0")); truthy(not API.versions.satisfies("1.2.3", ">=2.0.0"))
     local ok, err = API.validateDependency({ api = ">=2.0.0" }); equal(ok, nil); code(err, "E_API_VERSION")
     API.capabilities["test.missing"] = { available = false }
     ok, err = API.requireCapabilities({ "test.missing" }); equal(ok, nil); code(err, "E_CAPABILITY")
+end
+
+function tests.navigation_interruption_policy()
+    reset(); local context = enabled("test.nav.interrupt")
+    local lease = assert(API.navigation.acquire(context))
+    local handle = assert(lease:request("market", {
+        on_interrupt = function(event)
+            equal(event.interruption_reason, "customs")
+            return { auto_resume = true }
+        end,
+    }))
+    local response = mock.nav.interrupt("customs")
+    truthy(response and response.auto_resume); equal(handle:status().state, "running")
+    handle:cancelImmediate("test_cleanup")
+
+    lease = assert(API.navigation.acquire(context))
+    handle = assert(lease:request("market"))
+    mock.nav.interrupt("combat")
+    equal(handle:status().state, "failed"); equal(handle:status().reason, "combat")
 end
 
 function tests.duplicate_module_ids()
@@ -92,6 +117,38 @@ function tests.navigation_contention_and_callbacks()
     mock:completeNavigation(true); API.navigation._tick(); truthy(completed); equal(handle:status().state, "completed")
 end
 
+function tests.navigation_v33_status_contract()
+    reset(); local context = enabled("test.nav.status")
+    local lease = assert(API.navigation.acquire(context)); local handle = assert(lease:request("here"))
+    equal(handle:status().state, "completed")
+
+    lease = assert(API.navigation.acquire(context)); local rejected, err = lease:request("bad")
+    equal(rejected, nil); code(err, "E_NAV_START")
+
+    lease = assert(API.navigation.acquire(context)); handle = assert(lease:request("pending"))
+    equal(handle:status().state, "pending")
+    mock.nav.result = "completed"
+    API.navigation._tick()
+    equal(handle:status().state, "pending", "intermediate completion must not settle a pending route")
+    mock:resolveNavigation("walking")
+    equal(handle:status().state, "running")
+    mock:completeNavigation(true); API.navigation._tick()
+    equal(handle:status().state, "completed")
+end
+
+function tests.navigation_native_owner_is_not_overwritten_or_cleared()
+    reset(); local context = enabled("test.nav.native-owner")
+    mock.nav.owner = "hauling"
+    local lease, err = API.navigation.acquire(context)
+    equal(lease, nil); code(err, "E_NAV_CONTENTION"); equal(mock.nav.owner, "hauling")
+
+    mock.nav.owner = nil
+    lease = assert(API.navigation.acquire(context))
+    mock.nav.owner = "stamina"
+    assert(lease:release("ownership_changed"))
+    equal(mock.nav.owner, "stamina", "release must not clear a replacement owner")
+end
+
 function tests.navigation_graceful_and_immediate_cancel()
     reset(); local context = enabled("test.nav.cancel")
     local lease = assert(API.navigation.acquire(context)); local request = assert(lease:request("market"))
@@ -109,6 +166,33 @@ function tests.command_denial_and_zero_transmission()
     equal(result, nil); code(err, "E_COMMAND_LEASE"); equal(#mock.sent, 1)
     local disabled_context = API._modules["test.command"].context
     local denied; denied, err = API.commands.acquire(disabled_context); equal(denied, nil); code(err, "E_MODULE_DISABLED"); equal(#mock.sent, 1)
+end
+
+function tests.native_command_contention_is_fail_closed()
+    reset(); local context = enabled("test.command.native")
+    mock.native_blocker = { kind = "hauling" }
+    local lease, err = API.commands.acquire(context)
+    equal(lease, nil); code(err, "E_COMMAND_CONTENTION"); equal(#mock.sent, 0)
+
+    mock.native_blocker = nil
+    lease = assert(API.commands.acquire(context))
+    mock.native_blocker = { kind = "map_exploration" }
+    local ack; ack, err = lease:send("buy fuel", { reason = "must remain blocked" })
+    equal(ack, nil); code(err, "E_COMMAND_CONTENTION"); equal(#mock.sent, 0)
+end
+
+function tests.builtin_provider_rechecks_native_contention()
+    reset(); local context = enabled("test.provider.native-blocker")
+    assert(API.prices.registerProvider(context, {
+        id = "test.provider.activates-native", priority = 100,
+        request = function()
+            mock.native_blocker = { kind = "hauling" }
+            return false
+        end,
+    }))
+    local observed_error
+    assert(API.prices.request(context, "water", {}, function(_, err) observed_error = err end))
+    truthy(observed_error); code(observed_error, "E_PROVIDER"); equal(#mock.sent, 0)
 end
 
 function tests.provider_registration_and_fallback()
@@ -156,6 +240,14 @@ function tests.hauling_modes_and_release()
     local handle, err = API.hauling.start(context, { mode = "po" }); equal(handle, nil); code(err, "E_HAUL_MODE")
     handle = assert(API.hauling.start(context, { mode = "exchange" })); equal(mock.haul.mode, "exchange")
     mock.haul.active = false; API.hauling._refresh(); equal(API.commands._lease, nil)
+end
+
+
+function tests.hauling_rejection_releases_command_lease()
+    reset(); local context = enabled("test.haul.reject")
+    mock.haul.reject = true
+    local handle, err = API.hauling.start(context)
+    equal(handle, nil); code(err, "E_HAUL_START"); equal(API.commands._lease, nil); equal(API.hauling._owner, nil)
 end
 
 local names = {}; for name in pairs(tests) do names[#names + 1] = name end; table.sort(names)
