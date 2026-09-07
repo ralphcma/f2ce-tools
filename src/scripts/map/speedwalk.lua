@@ -1,5 +1,13 @@
 -- f2ce-tools map — speedwalk (ported from map_speedwalk.lua)
 
+-- Mudlet can reload this script while a speedwalk or compensating navigation
+-- owns the server's `brief` mode.  The server-side mode survives that reload,
+-- but the Lua state below is rebuilt.  Remember only modes F2CE itself owned
+-- so the newly-loaded script can restore the configured post-walk mode once;
+-- an ordinary user-selected `brief` mode is not touched.
+local F2T_SPEEDWALK_RELOAD_OWED_MODE_RESTORE =
+    F2T_SPEEDWALK_BRIEF_SWITCHED == true or F2T_MAP_BRIEF_HOLD_OWNER ~= nil
+
 F2T_SPEEDWALK_ACTIVE               = false
 F2T_SPEEDWALK_PAUSED               = false
 F2T_SPEEDWALK_DIR                  = {}
@@ -35,7 +43,7 @@ F2T_SPEEDWALK_FAILED_EXIT_ROOM     = nil
 F2T_SPEEDWALK_FAILED_EXIT_DIR      = nil
 F2T_SPEEDWALK_OWNER                = nil
 F2T_SPEEDWALK_ON_INTERRUPT         = nil
-F2T_SPEEDWALK_BRIEF_SWITCHED       = false
+F2T_SPEEDWALK_BRIEF_SWITCHED       = F2T_SPEEDWALK_RELOAD_OWED_MODE_RESTORE
 -- True between a customs interception stopping the old route and the
 -- recovery navigate being issued. Owners' nav-complete checks must not
 -- treat the "stopped" result during this window as a real user stop.
@@ -272,6 +280,18 @@ function f2t_map_speedwalk_resume_after_disconnect()
     -- still holds it rather than walking the rest of the route in full.
     if F2T_MAP_BRIEF_HOLD_OWNER then send("brief") end
     f2t_map_speedwalk_recompute_path()
+end
+
+-- All functions are now available, so a package/script reload that interrupted
+-- an F2CE-owned brief session can safely pay back that mode change.  Defer one
+-- Mudlet tick to avoid sending from the middle of the script loader.  A clean
+-- initial load and a reload while idle do nothing.
+if F2T_SPEEDWALK_RELOAD_OWED_MODE_RESTORE then
+    if type(tempTimer) == "function" then
+        tempTimer(0, function() f2t_map_speedwalk_restore_mode() end)
+    else
+        f2t_map_speedwalk_restore_mode()
+    end
 end
 
 function f2t_map_speedwalk_on_room_change()

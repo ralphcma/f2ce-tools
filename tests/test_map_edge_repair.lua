@@ -90,4 +90,20 @@ explore_file:close()
 check(explore_source:find("f2t_map_explore_planet_has_reachable_flags", 1, true),
     "system brief completion uses reachable flag validation")
 
+-- Reloading a Mudlet package does not reset the server's description mode.
+-- If F2CE had issued `brief`, the reloaded script must remember that debt and
+-- restore `full`; otherwise all room descriptions remain hidden until some
+-- later speedwalk happens to finish normally.
+local sent = {}
+function send(command) sent[#sent + 1] = command end
+F2T_SPEEDWALK_BRIEF_SWITCHED = true
+F2T_MAP_BRIEF_HOLD_OWNER = nil
+assert(loadfile(map_dir .. "/speedwalk.lua"))()
+equal(#sent, 1, "reload restores one F2CE-owned description mode")
+equal(sent[1], "full", "reload restores the configured full mode")
+
+sent = {}
+assert(loadfile(map_dir .. "/speedwalk.lua"))()
+equal(#sent, 0, "idle reload does not change a user-selected description mode")
+
 print("F2CE map edge repair tests passed")
