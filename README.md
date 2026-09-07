@@ -2,6 +2,11 @@
 
 A Mudlet package for [Federation 2 Community Edition](https://federation2.com) — mapping, navigation, automated trading, factory management, planet-owner tools, and quality-of-life automation, with an optional [Muxlet](https://github.com/tmtocloud/Muxlet)-based GUI.
 
+Bulk commodity trades use the server's counted command form. A fill-hold buy is
+sent once as `buy <commodity> <free bays>`; a single-commodity full-hold sale
+uses `sell cargo`. Existing per-bay response triggers count confirmed trades
+before the owning hauling workflow continues.
+
 ![F2CE-Tools Muxlet GUI](screenshot.png)
 
 ## Installation
