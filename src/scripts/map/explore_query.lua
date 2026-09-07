@@ -30,6 +30,26 @@ function f2t_map_explore_planet_has_flags(area_id, required_flags)
     return true
 end
 
+-- A stale imported surface can contain every requested flag while remaining
+-- disconnected from the live orbit/landing route. Brief exploration must not
+-- call that planet complete: doing so prevents the physical visit that would
+-- repair its `board` or cross-area `in`/`out` edge.
+function f2t_map_explore_planet_has_reachable_flags(area_id, required_flags, origin_room_id)
+    if not origin_room_id or not roomExists(origin_room_id) then return false end
+    for _, flag in ipairs(required_flags) do
+        local reachable = false
+        for _, room_id in ipairs(f2t_map_area_room_list(area_id)) do
+            if getRoomUserData(room_id, string.format("fed2_flag_%s", flag)) == "true"
+               and (room_id == origin_room_id or getPath(origin_room_id, room_id)) then
+                reachable = true
+                break
+            end
+        end
+        if not reachable then return false end
+    end
+    return true
+end
+
 function f2t_map_explore_is_sol(system_name)
     return string.lower(system_name or "") == "sol"
 end

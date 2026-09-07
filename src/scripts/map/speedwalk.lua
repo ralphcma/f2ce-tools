@@ -328,6 +328,35 @@ function f2t_map_speedwalk_on_room_change()
                 end
                 movement_success = true
                 repointed = true
+            elseif from_room and current_room ~= from_room then
+                -- Ordinary directions and `board` can also carry stale
+                -- destinations after a map import or a server-side room
+                -- rebuild. A confirmed room change immediately following
+                -- the one command is authoritative evidence for that edge.
+                -- Repair it in place and replan instead of treating the
+                -- successful move as a failure and walking the stale edge
+                -- again in a loop.
+                local command = F2T_SPEEDWALK_LAST_COMMAND
+                if command == "board" then
+                    removeSpecialExit(from_room, command)
+                    addSpecialExit(from_room, current_room, command)
+                    movement_success = true
+                else
+                    local direction_num = f2t_map_direction_to_number(command)
+                    if direction_num then
+                        setExit(from_room, current_room, direction_num)
+                        setExitStub(from_room, direction_num, false)
+                        movement_success = true
+                    end
+                end
+                if movement_success then
+                    repointed = true
+                    cecho(string.format(
+                        "\n<yellow>[map]<reset> '%s' actually arrives at room %d - map corrected\n",
+                        tostring(command), current_room))
+                    f2t_debug_log("[map] Repointed '%s' from room %s: %s -> %d",
+                        tostring(command), tostring(from_room), tostring(expected_room), current_room)
+                end
             end
         end
 
