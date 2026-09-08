@@ -4,8 +4,8 @@
 -- The embedded map widget is a per-profile singleton (TMainConsole::mpMapper
 -- in Mudlet), not a Qt child of its Geyser container, so deleting the slot
 -- doesn't remove it and reparenting an existing wrapper leaves it blank. On
--- release we hide the native mapper and drop our wrapper reference (see
--- releaseLive() for why we don't call m:delete()); on acquire we create a
+-- release we hide the native mapper and unregister only its Lua wrapper (see
+-- releaseLive() for how native deletion is avoided); on acquire we create a
 -- fresh wrapper, which re-points the singleton at the new slot. None of this
 -- touches the map database, which lives in Host::mpMap.
 --
@@ -27,18 +27,18 @@ local resizeCount = 0     -- diagnostic: how many times resize() has fired this 
 local liveSlotContent = nil
 local liveGid         = nil
 
--- Deliberately doesn't call m:delete(): Mudlet's GeyserMapper.lua routes
--- type_delete() through closeMapWidget(), which wedges the singleton native
--- mapper (TMainConsole::mpMapper) when called on an embedded mapper - the
--- next createMapper() sizes correctly, but its room-graphics layer never
--- paints again this session. m:hide() alone already zeros the embedded
--- mapper via Geyser's own embedded-aware path, and mapperSeq below
--- guarantees each new wrapper gets a unique window name.
+-- Mudlet's default Mapper:type_delete() closes the native mapper even for an
+-- embedded wrapper. Mux recursively deletes the content slot after remove(),
+-- so merely hiding our wrapper still reaches that native close. Each wrapper
+-- below overrides its own type_delete; deletion now unlinks the Lua object
+-- from Geyser without closing the per-profile native widget. This does not
+-- modify the global Mapper class or another package's mapper.
 local function releaseLive()
     if not liveMapper then return end
     local m = liveMapper
     liveMapper = nil
     pcall(function() m:hide() end)      -- sizes the singleton native mapper to 0×0
+    if type(m.delete) == "function" then m:delete() end
 end
 
 -- Acquire a mapper into `slotContent`.  Always a FRESH wrapper (reparenting an
@@ -54,6 +54,9 @@ local function mapperAcquire(slotContent)
         x      = "0%", y = "0%",
         width  = "100%", height = "100%",
     }, slotContent)
+    -- Also protects recursive slot destruction if Mux reaches it directly.
+    -- Visibility is handled by releaseLive(), not by the native close API.
+    liveMapper.type_delete = function() end
     f2t_debug_log("[map content] mapperAcquire #%d: Geyser.Mapper:new (createMapper) took %.0fms",
         mapperSeq, (os.clock() - tCreateStart) * 1000)
 
@@ -207,9 +210,9 @@ local function buildContentDef()
                     -- Re-syncs to the current room (cached GMCP, no command sent) so
                     -- the fresh widget doesn't open on a stale prior-session room,
                     -- and suppresses Mudlet's native empty-map overlay when unpopulated.
-                    if type(f2t_map_handle_gmcp_room) == "function" then
-                        f2t_map_handle_gmcp_room()
-                    end
+                    -- For a known room, sync only presentation. Replaying the
+                    -- room handler during a UI remount can repeat arrival work.
+                    applyMapView()
 
                     -- ...and then settle the view over the next few seconds.
                     -- See VIEW_SYNC_RETRY_DELAYS above for why one shot isn't
@@ -318,9 +321,12 @@ function f2tMapHasLiveMapper()
     return liveMapper ~= nil
 end
 
+local contentDefinition
 function f2tRegisterMapContent()
     if not (Mux and Mux.registerContent) then return end
-    Mux.registerContent("fed2_map", buildContentDef())
+    contentDefinition = contentDefinition or buildContentDef()
+    if Mux._content and Mux._content.fed2_map == contentDefinition then return end
+    Mux.registerContent("fed2_map", contentDefinition)
 end
 
 F2T_CONTENT_REGISTRARS = F2T_CONTENT_REGISTRARS or {}
