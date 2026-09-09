@@ -1,5 +1,29 @@
 # Module API verification
 
+## 2026-09-09 premium hauling ownership correction
+
+Candidate: `f2ce-tools-3.3.0-native-ew4.mpackage`, API 1.2.0-candidate.2.
+Walker stays 3.4.0-native.3; its separately reported black-tab issue is not
+claimed fixed by this package.
+
+SHA-256: `e5e3032cf0ac8a46545d7792b7f5822831407b77c2d54771a26e5d093d89554b`.
+249 syntax checks, 32 metadata checks, 221 compiled-script matches, and all
+59 regression groups passed against source and compiled package (API 20,
+adapter 5, Walker 23, startup 6, topology 4, map lifecycle 1). The paired
+FedHauler 1.16.2 native integration suite also passes all 22 tests against
+the Lua extracted from both built artifacts.
+
+Native `f2t_hauling_start` reserves navigation owner `hauling` before invoking
+price analysis. The API already borrowed the correct hauling command lease,
+but its adapter still treated that stationary reservation as foreign contention.
+Allow only the owned hauling-price request to share that exact reservation.
+Active or pending movement, foreign owners, recovery and capture conflicts
+remain denied. Ownership is neither cleared nor overwritten.
+
+The native adapter test covers this boundary and FedHauler's real native-API
+test invokes the price checker synchronously inside hauling start with the
+reservation set. No live account, profile, or network gameplay is exercised.
+
 ## 2026-09-09 Exchange Walker color/settings/layout repair
 
 Candidate: `f2ce-tools-3.3.0-native-ew3.mpackage`, Walker 3.4.0-native.3.

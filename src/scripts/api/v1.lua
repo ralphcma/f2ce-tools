@@ -11,7 +11,7 @@ if type(existing) == "table" and type(existing._reload) == "function" then
 end
 
 local API = {
-    _build = "1.2.0-candidate.1",
+    _build = "1.2.0-candidate.2",
     version = "1.2.0",
     f2ce_version = "unknown",
     capabilities = {},

@@ -124,10 +124,16 @@ local function active(state)
 end
 
 function adapter.nativeCommandBlocker(owned_hauling_price)
-    if F2T_SPEEDWALK_OWNER ~= nil then
+    -- Native hauling reserves "hauling" for its entire session, including
+    -- stationary price analysis. Only the API's borrowed hauling-price lease
+    -- may share that reservation; it never permits an in-flight movement.
+    local own_reservation = owned_hauling_price == true
+        and active(F2T_HAULING_STATE) and F2T_SPEEDWALK_OWNER == "hauling"
+    if F2T_SPEEDWALK_OWNER ~= nil and not own_reservation then
         return { kind = "navigation_owner", owner = tostring(F2T_SPEEDWALK_OWNER) }
     end
     if F2T_SPEEDWALK_ACTIVE == true then return { kind = "speedwalk" } end
+    if F2T_SPEEDWALK_WAITING_FOR_MOVE == true then return { kind = "movement_pending" } end
     if active(F2T_MAP_EXPLORE_STATE) then return { kind = "map_exploration" } end
     if active(F2T_MAP_CIRCUIT_STATE) then return { kind = "map_circuit" } end
     if active(F2T_HAULING_STATE) and not owned_hauling_price then return { kind = "hauling" } end

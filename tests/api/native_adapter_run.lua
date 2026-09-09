@@ -126,6 +126,31 @@ function tests.destination_and_hauling_acceptance()
     F2T_HAULING_STATE.active = false
 end
 
+function tests.borrowed_hauling_price_shares_only_stationary_own_reservation()
+    F2T_HAULING_STATE.active = true
+    F2T_SPEEDWALK_OWNER = "hauling"
+    equal(adapter.nativeCommandBlocker(true), nil)
+    equal(adapter.nativeCommandBlocker().kind, "navigation_owner")
+    F2T_SPEEDWALK_ACTIVE = true
+    equal(adapter.nativeCommandBlocker(true).kind, "speedwalk")
+    F2T_SPEEDWALK_ACTIVE = false
+    F2T_SPEEDWALK_WAITING_FOR_MOVE = true
+    equal(adapter.nativeCommandBlocker(true).kind, "movement_pending")
+    F2T_SPEEDWALK_WAITING_FOR_MOVE = false
+    F2T_SPEEDWALK_OWNER = "stamina"
+    equal(adapter.nativeCommandBlocker(true).kind, "navigation_owner")
+    F2T_SPEEDWALK_OWNER = "hauling"
+    F2T_BULK_STATE.active = true
+    equal(adapter.nativeCommandBlocker(true).kind, "bulk_trade")
+    F2T_BULK_STATE.active = false
+    F2T_PRICE_CALLBACK = function() end
+    equal(adapter.nativeCommandBlocker(true).kind, "price_request")
+    F2T_PRICE_CALLBACK = nil
+    F2T_HAULING_STATE.active = false
+    equal(adapter.nativeCommandBlocker(true).kind, "navigation_owner")
+    F2T_SPEEDWALK_OWNER = nil
+end
+
 local names = {}; for name in pairs(tests) do names[#names + 1] = name end; table.sort(names)
 for _, name in ipairs(names) do
     local ok, err = xpcall(tests[name], function(value) return debug.traceback(tostring(value), 2) end)
