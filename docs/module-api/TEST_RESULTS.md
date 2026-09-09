@@ -1,5 +1,36 @@
 # Module API verification
 
+## 2026-09-09 navigation completion handoff
+
+Candidate: `f2ce-tools-3.3.0-native-ew5.mpackage`, API 1.2.0-candidate.3.
+Pair with FedHauler 1.16.4. Exchange Walker remains 3.4.0-native.3; its
+separately reported black-tab issue is unchanged.
+
+SHA-256: `6203910217eb6b06d2dc8bc97a9972d3c2fa159a7088e2c23e7358475c5ec795`.
+
+The previous API completed a navigation request as soon as the destination ID
+matched, before checking native active/pending movement. Its `arrived` callback
+path bypassed that check as well. Now retain the lease until speedwalking,
+pending movement/arrival, exploration/circuit and customs continuation settle.
+Only then release ownership and publish completion, so event subscribers see
+the same released broker as the result callback. Foreign ownership remains
+untouched. Native map code and map/pane contents are not changed.
+
+New regressions cover each unsettled state, early native arrived callbacks,
+and command acquisition from completion events. Consumer integration also
+walks two simulated exchanges, waits before each local futures request, and
+advances without contention. FedHauler separately waits at most five seconds
+for temporary capture contention; persistent or foreign-owner contention stops
+with explicit blocker details and preserves its checkpoint for explicit resume.
+No capture reset, owner override, or trade retry is introduced.
+
+Offline source and compiled-package checks cover 62 groups (API 23, adapter 5,
+Walker 23, startup 6, topology 4, map lifecycle 1), 249 Lua syntax checks,
+32 metadata checks and 221 compiled-script matches. Paired FedHauler checks
+cover 182 legacy, 36 native and 13 Trader-goal tests. Live acceptance is pending;
+the user's earlier message did not identify which native blocker persisted.
+No live install, gameplay or publication was performed.
+
 ## 2026-09-09 premium hauling ownership correction
 
 Candidate: `f2ce-tools-3.3.0-native-ew4.mpackage`, API 1.2.0-candidate.2.

@@ -216,6 +216,7 @@ function adapter.navState()
         interruption_pending = F2T_SPEEDWALK_CUSTOMS_PENDING == true,
         room_id = tonumber(F2T_MAP_CURRENT_ROOM_ID),
         waiting = F2T_SPEEDWALK_WAITING_FOR_MOVE,
+        waiting_for_arrival = F2T_SPEEDWALK_WAITING_FOR_ARRIVAL == true,
         expected_room_id = tonumber(F2T_SPEEDWALK_EXPECTED_ROOM_ID),
         before_room_id = tonumber(F2T_SPEEDWALK_ROOM_BEFORE_MOVE),
     }

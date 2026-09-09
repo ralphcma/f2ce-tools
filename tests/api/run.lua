@@ -117,6 +117,49 @@ function tests.navigation_contention_and_callbacks()
     mock:completeNavigation(true); API.navigation._tick(); truthy(completed); equal(handle:status().state, "completed")
 end
 
+function tests.arrival_waits_for_native_teardown()
+    for _, field in ipairs({"active", "waiting", "waiting_for_arrival", "interruption_pending", "exploring", "circuit_active"}) do
+        reset(); local context = enabled("test.nav.settle")
+        local completed = 0
+        local lease = assert(API.navigation.acquire(context))
+        local handle = assert(lease:request("market", {on_complete=function() completed=completed+1 end}))
+        mock.nav.current, mock.nav.active = "market", false
+        mock.nav[field] = true
+        API.navigation._tick()
+        equal(completed, 0, field .. " must settle before arrival")
+        equal(lease.active, true, "keep ownership while native work is pending")
+        local denied = API.commands.acquire(context); equal(denied, nil)
+        mock.nav[field], mock.nav.result = false, "completed"
+        API.navigation._tick()
+        equal(completed, 1); equal(handle:status().state, "completed")
+        local commands = assert(API.commands.acquire(context)); commands:release()
+    end
+end
+
+function tests.native_arrived_callback_does_not_bypass_teardown()
+    reset(); local context = enabled("test.nav.callback-settle")
+    local completed = 0
+    local lease = assert(API.navigation.acquire(context))
+    local handle = assert(lease:request("market", {on_complete=function() completed=completed+1 end}))
+    mock:resolveNavigation("arrived")
+    equal(completed, 0, "arrived status is not permission to ignore an active speedwalk")
+    mock.nav.active = false; API.navigation._tick()
+    equal(completed, 1); equal(handle:status().state, "completed")
+end
+
+function tests.navigation_completion_event_observes_released_lease()
+    reset(); local context = enabled("test.nav.event-release")
+    local acquired
+    API.events.subscribe("navigation.completed", function()
+        acquired = API.commands.acquire(context)
+    end)
+    local lease = assert(API.navigation.acquire(context))
+    assert(lease:request("market"))
+    mock:completeNavigation(true); API.navigation._tick()
+    truthy(acquired, "completed subscribers may acquire commands after native teardown")
+    acquired:release()
+end
+
 function tests.navigation_v33_status_contract()
     reset(); local context = enabled("test.nav.status")
     local lease = assert(API.navigation.acquire(context)); local handle = assert(lease:request("here"))

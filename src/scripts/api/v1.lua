@@ -11,7 +11,7 @@ if type(existing) == "table" and type(existing._reload) == "function" then
 end
 
 local API = {
-    _build = "1.2.0-candidate.2",
+    _build = "1.2.0-candidate.3",
     version = "1.2.0",
     f2ce_version = "unknown",
     capabilities = {},
@@ -394,9 +394,9 @@ local function finish_navigation(state, reason, detail)
     request.public.detail = readonly_copy(detail)
     request.public.finished_at = os.time()
     navigation._request = nil
-    API.events.emit(state == "completed" and "navigation.completed" or "navigation.failed", request.public)
     local callback = state == "completed" and request.on_complete or request.on_failure
     release_nav_lease(reason or state)
+    API.events.emit(state == "completed" and "navigation.completed" or "navigation.failed", request.public)
     safe_call("navigation result", callback, readonly_copy(request.public))
 end
 
@@ -446,13 +446,13 @@ function Lease:request(destination, options)
     local function native_result(success, status)
         if request.finished then return end
         if status == nil then
-            if success then finish_navigation("completed", "arrived")
+            if success then request.public.native_status = "arrived"; navigation._tick()
             else finish_navigation("failed", "unmapped_or_unreachable") end
             return
         end
         request.public.native_status = status
         if status == "arrived" then
-            finish_navigation("completed", "arrived")
+            navigation._tick()
         elseif status == "failed" then
             finish_navigation("failed", "unmapped_or_unreachable")
         elseif status == "walking" then
@@ -488,7 +488,6 @@ function Lease:request(destination, options)
     request.public.native_status = type(result) == "string" and result or nil
     request.public.state = (result == "pending" or result == nil) and "pending" or "running"
     API.events.emit("navigation.started", request.public)
-    if result == "arrived" then finish_navigation("completed", "arrived"); return handle end
     navigation._tick()
     return handle
 end
@@ -587,17 +586,24 @@ function navigation._tick()
         finish_navigation("cancelled", request.cancel_requested)
         return
     end
-    if API._adapter and API._adapter.navDestinationReached then
-        local ok, reached = pcall(API._adapter.navDestinationReached, request.public.destination)
-        if ok and reached then finish_navigation("completed", "arrived"); return end
-    end
     local state = API._adapter and API._adapter.navState and API._adapter.navState() or nil
     if not state then return end
     request.public.progress = readonly_copy(state)
-    if state.active then
+    -- Room GMCP can reach the target before the mapper processes the final
+    -- step or an arrival/customs continuation finishes. Retain the lease until
+    -- native movement is idle, for both polling and native on_result paths.
+    if state.active or state.waiting or state.waiting_for_arrival
+        or state.exploring or state.circuit_active or state.interruption_pending then
         request.public.state = state.paused and "paused"
             or (request.public.native_status == "pending" and "pending" or "running")
-    elseif request.public.native_status ~= "pending" and state.result == "completed" then
+        return
+    end
+    if API._adapter and API._adapter.navDestinationReached then
+        local ok, reached = pcall(API._adapter.navDestinationReached, request.public.destination)
+        if ok and reached then finish_navigation("completed", "arrived", state); return end
+    end
+    if request.public.native_status == "arrived"
+        or (request.public.native_status ~= "pending" and state.result == "completed") then
         finish_navigation("completed", "arrived", state)
     elseif request.public.native_status ~= "pending" and (state.result == "failed" or state.result == "stopped") then
         finish_navigation("failed", state.reason or state.result, state)
