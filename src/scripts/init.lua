@@ -278,7 +278,9 @@ local function bootHostOpts()
     -- the same shape Muxlet's own "Muxlet/Update" tab has, rather than lumping
     -- them into General. On web the rows are simply never registered.
     if not f2t_is_web() then
-        opts.updateRepo              = "federation2-community/f2ce-tools"
+        -- Native module candidate builds follow the user's fork. Upstream
+        -- releases do not yet include the module API or Exchange Walker.
+        opts.updateRepo              = "ralphcma/f2ce-tools"
         opts.updateSettingsNamespace = "f2t"
         opts.updateSettingsTab       = "F2CE-Tools/Update"
 

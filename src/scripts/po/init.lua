@@ -27,6 +27,7 @@ function f2t_po_reset()
     f2t_po.capture_buffer = {}
     f2t_po.callback       = nil
     f2t_po.timer_id       = nil
+    f2t_po.header_planet  = nil
 end
 
 f2t_debug_log("[po] Initialized")

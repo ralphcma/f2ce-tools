@@ -1,5 +1,13 @@
 # F2CE-Tools
 
+> **Native integration candidate in the ralphcma fork:** this branch includes
+> Exchange Walker and `F2CE.API.v1` 1.1.0. It is not an upstream-approved release.
+> All Walker preferences are in **Muxlet Settings → F2CE-Tools → Exchange Walker**.
+> Read the [migration, defaults, build and licensing notes](docs/module-api/NATIVE_EXCHANGE_WALKER.md)
+> before installing. In-game/MPR installation described below still delivers the
+> community package, not this candidate. No separate Walker/API package is needed
+> for the native Walker; other consumers such as FedHauler are unchanged.
+
 A Mudlet package for [Federation 2 Community Edition](https://federation2.com) — mapping, navigation, automated trading, factory management, planet-owner tools, and quality-of-life automation, with an optional [Muxlet](https://github.com/tmtocloud/Muxlet)-based GUI.
 
 Independent packages should use Muxlet's `Mux.registerContent` for visual content and workspace integration. For behind-the-scenes F2CE features—such as navigation, hauling, prices, copied game state, and map queries—they should use the versioned `F2CE.API.v1` boundary instead of reading or replacing `F2T_*`/`f2t_*` implementation globals. See the [module API architecture](docs/module-api/ARCHITECTURE.md), [reference](docs/module-api/API_REFERENCE.md), and [example module](examples/module_api_v1/example_module.lua).

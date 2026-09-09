@@ -86,6 +86,39 @@ function adapter.gmcpSnapshot(path)
     return clone(node)
 end
 
+-- Use the native capture engine, not a temporary parser replacement. The
+-- callback itself is the ownership token: never reset someone else's capture.
+local exchange_callbacks = {}
+function adapter.exchangeCapture(kind, planet, callback)
+    local capture = kind == "exchange" and f2t_po_capture_exchange or f2t_po_capture_production
+    if type(capture) ~= "function" or type(f2t_po_reset) ~= "function" then
+        return false, "native PO capture service is unavailable"
+    end
+    local wrapper = function(rows, failure, metadata)
+        exchange_callbacks[callback] = nil
+        if planet and (type(metadata) ~= "table" or type(metadata.planet) ~= "string"
+            or metadata.planet:lower() ~= planet:lower()) then
+            callback(nil, failure or "capture header did not confirm the requested planet")
+        else
+            callback(rows, failure)
+        end
+    end
+    exchange_callbacks[callback] = wrapper
+    local started, reason = capture(planet, wrapper)
+    if not started then exchange_callbacks[callback] = nil end
+    return started, reason
+end
+
+function adapter.exchangeCancel(callback)
+    local wrapper = exchange_callbacks[callback]
+    exchange_callbacks[callback] = nil
+    if type(f2t_po) ~= "table" or f2t_po.phase == "idle" then return true end
+    if not wrapper or f2t_po.callback ~= wrapper then return false, "capture ownership changed" end
+    if type(f2t_po_reset) ~= "function" then return false, "capture reset is unavailable" end
+    f2t_po_reset()
+    return true
+end
+
 local function active(state)
     return type(state) == "table" and state.active == true
 end

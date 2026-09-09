@@ -11,8 +11,8 @@ if type(existing) == "table" and type(existing._reload) == "function" then
 end
 
 local API = {
-    _build = "1.0.0-candidate.3",
-    version = "1.0.0",
+    _build = "1.1.0-candidate.1",
+    version = "1.1.0",
     f2ce_version = "unknown",
     capabilities = {},
     schemas = {},
@@ -302,6 +302,9 @@ function API.modules.disable(id, reason)
     local record = module_record(id)
     if not record then return nil, api_error("E_MODULE_UNKNOWN", "module is not registered", { id = id }) end
     if record.state ~= "enabled" then return true end
+    -- Revoke callback authority before cleanup; a disable callback can call
+    -- back into its controller without recursively disabling the same record.
+    record.state = "disabling"
     safe_call(id .. " disable", record.spec.disable, record.context, reason or "disabled")
     API.navigation._revokeModule(id, reason or "module_disabled")
     API.commands._revokeModule(id, reason or "module_disabled")
@@ -641,6 +644,9 @@ function CommandLease:send(command, metadata)
     entry.status = ok and result ~= false and "sent" or "failed"
     entry.reason = ok and nil or tostring(result)
     commands._record(entry)
+    API.events.emit(entry.status == "sent" and "command.sent" or "command.failed", entry)
+    -- Legacy event name retained for compatibility. This is a transport
+    -- receipt, NOT confirmation that the game accepted the command.
     API.events.emit("command.acknowledged", entry)
     if entry.status ~= "sent" then return nil, api_error("E_COMMAND_SEND", "command transport failed", entry) end
     return readonly_copy(entry)
@@ -936,6 +942,9 @@ function API._install(adapter)
     capability("hauling", type(adapter.haulingStart) == "function", adapter.name)
     capability("hauling.exchange_override", type(adapter.haulingStart) == "function", adapter.name)
     capability("map.queries", type(adapter.mapResolve) == "function", adapter.name)
+    capability("exchange.capture", type(adapter.exchangeCapture) == "function"
+        and type(adapter.exchangeCancel) == "function", "serialized native PO capture")
+    capability("exchange.settings", API.exchange ~= nil, "typed stockpile/spread commands")
     capability("muxlet.content", adapter.muxletContentAvailable and adapter.muxletContentAvailable() or false,
         "UI content belongs in Mux.registerContent")
     if adapter.registerEvent then
@@ -973,6 +982,12 @@ function API.info()
 end
 
 function API._reconnectReset(reason)
+    -- Reconnect never carries automation authority into another connection.
+    local enabled = {}
+    for id, record in pairs(API._modules) do
+        if record.state == "enabled" then enabled[#enabled + 1] = id end
+    end
+    for _, id in ipairs(enabled) do API.modules.disable(id, reason or "reconnect_reset") end
     if navigation._request and API._adapter and API._adapter.navStop then safe_call("reconnect navigation stop", API._adapter.navStop) end
     if navigation._request then finish_navigation("cancelled", "reconnect_reset") elseif navigation._lease then release_nav_lease("reconnect_reset") end
     if commands._lease then commands._lease:release("reconnect_reset") end

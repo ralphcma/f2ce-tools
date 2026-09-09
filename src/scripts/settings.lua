@@ -7,6 +7,7 @@
 local _registry  = {}   -- {component → {key → config}}  (always maintained)
 local _localData = {}   -- fallback store when Mux unavailable
 local _pending   = {}   -- registrations queued before Mux loaded
+local _onChange = {}
 
 -- ── f2t_settings proxy ───────────────────────────────────────────────────────
 -- Scripts that access f2t_settings.map.destinations directly (destinations.lua)
@@ -53,6 +54,8 @@ function f2t_settings_register(component, key, config)
             choices     = config.choices,
             min         = config.min,
             max         = config.max,
+            validator   = config.validator,
+            widget      = config.widget,
         })
     else
         table.insert(_pending, {component = component, key = key, config = config})
@@ -72,9 +75,20 @@ function f2t_settings_flush_registrations()
             choices     = reg.config.choices,
             min         = reg.config.min,
             max         = reg.config.max,
+            validator   = reg.config.validator,
+            widget      = reg.config.widget,
         })
     end
     _pending = {}
+    if Mux.settings.onChange then
+        for _, item in pairs(_onChange) do Mux.settings.onChange(item.component, item.key, item.callback) end
+    end
+end
+
+function f2t_settings_on_change(component, key, callback)
+    assert(type(callback) == "function", "settings callback must be a function")
+    _onChange[component .. "." .. key] = { component = component, key = key, callback = callback }
+    if Mux and Mux.settings and Mux.settings.onChange then Mux.settings.onChange(component, key, callback) end
 end
 
 -- ── Access ────────────────────────────────────────────────────────────────────
@@ -87,15 +101,25 @@ function f2t_settings_get(component, key)
     local v = store[key]
     if v ~= nil then return v end
     local reg = _registry[component] and _registry[component][key]
-    return reg and reg.default or nil
+    if reg then return reg.default end -- false is a real default, not missing
+    return nil
 end
 
 function f2t_settings_set(component, key, value)
     if Mux and Mux.settings and Mux.settings.set then
         return Mux.settings.set(component, key, value)
     end
+    local reg = _registry[component] and _registry[component][key]
+    if not reg then return false, "Unknown setting: " .. tostring(component) .. "." .. tostring(key) end
+    if type(reg.default) == "number" and type(value) == "string" then value = tonumber(value) end
+    if reg.validator then
+        local ok, reason = reg.validator(value)
+        if not ok then return false, reason or "invalid value" end
+    end
     _localData[component] = _localData[component] or {}
     _localData[component][key] = value
+    local change = _onChange[component .. "." .. key]
+    if change then change.callback(value) end
     return true
 end
 

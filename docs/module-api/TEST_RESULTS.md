@@ -1,5 +1,69 @@
 # Module API verification
 
+## 2026-09-09 native Exchange Walker / API 1.1 candidate
+
+API development handoff was completed from the Build F2CE Module API task.
+Work continues on `codex/native-exchange-walker`, based on `9d81fec`, in the
+user's F2CE fork. No live profile, server, deployment, release, or push was used.
+
+Candidate: `f2ce-tools-3.3.0-native-ew1.mpackage` (Walker 3.4.0-native.1;
+API 1.1.0-candidate.1; pinned Muxlet v2.3.2).
+
+SHA-256: `949CD3F4107FF21EB60605859BDC7BCE370B1B24D1ADA2EB7CE7CF6B795C9BEC`.
+
+Build and verify with the checked-in scripts (Lua/luac 5.1.5, Muddler 1.1.0,
+OpenJDK 21):
+
+```powershell
+./scripts/build-native.ps1 -MuddlerJar <muddle-1.1.0-all.jar> -JavaCommand <java.exe>
+./scripts/test-native.ps1 -LuaExe <lua51.exe> -LuacExe <luac51.exe> -PackagePath <candidate.mpackage>
+```
+
+Results:
+
+- Lua syntax: **244 files passed**.
+- JSON/mfile validation: **32 files passed**.
+- API suite: **20 passed, 0 failed**.
+- Native adapter suite: **4 passed, 0 failed**.
+- Native Walker integration: **17 groups passed, 0 failed**, including 165
+  stock-policy cases verifying every intermediate min/max command is legal.
+- Map startup safety: **6 passed, 0 failed**.
+- Topology capture safety: **4 passed, 0 failed**.
+- Map content lifecycle regression: **passed**.
+- Exact compiled XML: **216 embedded scripts matched** checkout source after
+  the documented Muddler metadata substitutions and dependency injection.
+- All six suites were then repeated successfully against the reconstructed
+  Lua from the actual package XML, not merely the staging directory.
+- ZIP portable paths, required notices, native markers, pinned Muxlet URL,
+  package XML parsing, and absence of the separate API loader: **passed**.
+- `git diff --check`: **passed**.
+
+New coverage includes disabled/contended API sessions; command input/range and
+local ownership rejection; capture timeout, foreign callback ownership and
+late callback isolation; callback-error cleanup; pruning released resources;
+reconnect authority revocation; one-line/wrapped rows; wrong remote response
+targets; incomplete counts; exact apply acknowledgements; no timeout retry;
+Muxlet late load, visible defaults and custom validators; migration/schema
+rejection and preserving native settings; explicit timer start and interval;
+settings-change cancellation; duplicate-package blocking; pane 1/7/foreign
+pane isolation; idempotent registration/reload/uninstall; and capture-scoped
+blank suppression.
+
+### Remaining live acceptance
+
+The candidate has **not** been installed into Mudlet or run against the game.
+Offline widget mocks do not prove Qt rendering. In a backed-up test profile,
+check the real Settings form, old-to-native migration, standalone uninstall,
+the default pane 15 and an existing custom layout, map/Galaxy rendering,
+remote capture/preview, one explicit confirmed apply, timer start/stop, and
+reconnect OFF behavior before adopting it for unattended use.
+
+The interface hooks were inspected in Muxlet v2.2.9, but the package keeps the
+existing v2.3.2 dependency; there was no live v2.2.9 installation test. No new
+repository-wide lint claim is made; the older lint results below are historical.
+
+## Historical candidate 1.0 validation
+
 Environment: Windows, portable Lua/luac 5.1.5, LuaCheck 1.2.0, muddler 1.1.0, and Android OpenJDK 21. Validation was run on `feature/module-api-v1` after merging upstream `v3.3.0`. No game connection, profile automation, installed Mudlet package, or public server was used.
 
 ## Commands and results

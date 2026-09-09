@@ -4,7 +4,7 @@ All data returned across the API boundary is copied. Errors are tables with `cod
 
 ## Metadata and dependency validation
 
-- `API.version`: semantic API version (`1.0.0`).
+- `API.version`: semantic API version (`1.1.0`; candidate build).
 - `API.f2ce_version`: installed F2CE package version.
 - `API.info()`: copied API/F2CE/adapter/capability/integration record.
 - `API.hasCapability(name)`, `API.getCapabilities()`, `API.requireCapabilities(names)`.
@@ -40,7 +40,36 @@ Events: `navigation.lease_acquired`, `.lease_released`, `.started`, `.paused`, `
 
 `lease = API.commands.acquire(context, metadata)` obtains the sole command lease. `lease:send(command,{reason="...", echo=false, ...})` transmits only while the owning module remains enabled. `lease:release(reason)` revokes it. Navigation and arbitrary command leases are mutually exclusive. Acquisition fails while known native speedwalk, exploration, circuit, hauling, death-recovery, bulk-trade, or command/response capture state is active; every API send rechecks that state and fails closed with zero transmission if it changed. `API.commands.audit()` returns copied bounded history.
 
-`command.acknowledged` fields: `id`, `module_id`, `lease_id`, `command`, copied `metadata`, `timestamp`, `status`, and optional `reason`.
+`command.sent` / `command.failed` fields: `id`, `module_id`, `lease_id`, `command`, copied `metadata`, `timestamp`, `status`, and optional `reason`. These report transport only, not game acceptance. `command.acknowledged` remains a deprecated transport alias for backward compatibility.
+
+## Exchange capture and stock settings (1.1)
+
+Capabilities: `exchange.capture`, `exchange.settings`.
+`session = API.exchange.acquire(context,{reason="explicit reviewed operation"})`
+holds the existing command lease across related operations. A disabled module,
+foreign API lease, or known native automation prevents acquisition.
+
+- `session:capture(kind,planet,callback,{timeout=15})`: kind is `exchange` or
+  `production`; planet may be nil for local capture. Callback `(rows,error)`
+  receives copied native PO results. Remote response headers must identify the
+  requested planet. Exchange results include `_expected_count` from the summary.
+  The consumer must validate completeness before acting on the data.
+- `session:set({kind,commodity,value,planet})`: typed setting command. Accepted
+  ranges are integer min 0–10000, max 0–20000, spread 6–40. Local operations
+  require current owner/player GMCP equality; remote ownership is enforced by
+  the server. A sent result is not a server acknowledgement.
+- `session:status()`, `session:release(reason)`: release cancels only the capture
+  callback owned by that session. The client must release after a capture pair
+  or confirmed apply sequence. Disable/unload/reconnect also clean the session.
+
+`exchange.captured` / `exchange.capture_failed` carry copied `kind`, `planet`,
+`module_id`, `rows`, and optional `error`. Invalid kinds, names, numbers,
+contention, missing capabilities, disabled contexts and timeouts fail closed.
+
+The native [Exchange Walker integration](NATIVE_EXCHANGE_WALKER.md) demonstrates
+complete capture validation and one-at-a-time acknowledged setting changes.
+Reconnect now disables every enabled module; consumers must explicitly enable
+again, rather than obtaining new leases with old connection authority.
 
 ## Copied GMCP data
 

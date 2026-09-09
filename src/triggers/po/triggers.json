@@ -3,15 +3,15 @@
     "name": "capture_line",
     "patterns": [
       {
-        "pattern": "^\\s+\\w[^:]+: value \\d+ig/ton",
+        "pattern": "^\\s*\\w[^:]*:\\s+value\\s+\\d+ig/ton",
         "type": "regex"
       },
       {
-        "pattern": "^\\d+%\\s+Net:",
+        "pattern": "^\\s*(?:\\d+%\\s+Net:|Efficiency:|Net:|Spread:|Stock:|current\\s+-?\\d+/min|consumption\\s+\\d+)",
         "type": "regex"
       },
       {
-        "pattern": "^\\s+\\w[^:]+: production \\d+,",
+        "pattern": "^\\s*\\w[^:]*:\\s+production\\s+\\d+,",
         "type": "regex"
       }
     ]
@@ -51,7 +51,7 @@
     "name": "exchange_summary",
     "patterns": [
       {
-        "pattern": "^\\d+ commodities,",
+        "pattern": "^\\s*\\d+ commodities,",
         "type": "regex"
       }
     ]
@@ -64,5 +64,6 @@
         "type": "substring"
       }
     ]
-  }
+  },
+  { "name": "capture_blank", "patterns": [{ "pattern": "^\\s*$", "type": "regex" }] }
 ]

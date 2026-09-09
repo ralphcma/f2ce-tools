@@ -1,80 +1,48 @@
--- Parser for exchange and production game output
--- Exchange output wraps each commodity across two lines:
---   Line 1: "  Alloys: value 137ig/ton  Spread: 20%   Stock: current 800/min 100/max 800  Efficiency:"
---   Line 2: "105%  Net: 44"
--- Production output is one line per commodity:
---   "  Alloys: production 45, consumption 1 (44), efficiency 105%"
-
---- Parse exchange buffer into structured data
---- @param buffer table Array of captured lines
---- @return table Array of {name, value, spread, stock_current, stock_min, stock_max, efficiency, net}
-function f2t_po_parse_exchange_buffer(buffer)
-    local results = {}
-    local i = 1
-
-    while i <= #buffer do
-        local line1 = buffer[i]
-
-        -- Match line 1: commodity data ending with "Efficiency:"
-        local name, value, spread, stock_cur, stock_min, stock_max =
-            line1:match(
-                "^%s+(.-):%s+value%s+(%d+)ig/ton%s+Spread:%s+(%d+)%%%s+Stock:%s+current%s+" ..
-                "(%-?%d+)/min%s+(%-?%d+)/max%s+(%-?%d+)%s+Efficiency:")
-
-        if name and i + 1 <= #buffer then
-            -- Match line 2: efficiency and net
-            local line2 = buffer[i + 1]
-            local efficiency, net = line2:match("^(%d+)%%%s+Net:%s+(%-?%d+)")
-
-            if efficiency then
-                table.insert(results, {
-                    name = name,
-                    value = tonumber(value),
-                    spread = tonumber(spread),
-                    stock_current = tonumber(stock_cur),
-                    stock_min = tonumber(stock_min),
-                    stock_max = tonumber(stock_max),
-                    efficiency = tonumber(efficiency),
-                    net = tonumber(net)
-                })
-                i = i + 2
-            else
-                f2t_debug_log("[po] Failed to parse exchange line 2: %s", line2)
-                i = i + 1
-            end
-        else
-            -- Unmatched line, skip
-            if name then
-                f2t_debug_log("[po] Exchange line 1 matched but no line 2 available")
-            end
-            i = i + 1
+-- Parse exchange/production records in one-line or wrapped server output.
+-- Each commodity starts a new record; never borrow fields from the next row.
+local function records(buffer, field)
+    local result, pending = {}, nil
+    for _, value in ipairs(type(buffer) == "table" and buffer or {}) do
+        local text = tostring(value)
+        if text:match("^%s*[%w][^:]*:%s*" .. field .. "%s+") then
+            if pending then result[#result + 1] = pending end
+            pending = text
+        elseif pending then
+            pending = pending .. " " .. text
         end
     end
+    if pending then result[#result + 1] = pending end
+    return result
+end
 
-    f2t_debug_log("[po] Parsed %d commodities from exchange data", #results)
+function f2t_po_parse_exchange_buffer(buffer, summary)
+    local results = {}
+    for _, text in ipairs(records(buffer, "value")) do
+        local name, value, spread, current, minimum, maximum, efficiency, net = text:match(
+            "^%s*(.-):%s+value%s+(%d+)ig/ton%s+Spread:%s+(%d+)%%%s+Stock:%s+current%s+" ..
+            "(%-?%d+)/min%s+(%-?%d+)/max%s+(%-?%d+)%s+Efficiency:%s*(%d+)%%%s+Net:%s*(%-?%d+)")
+        if name then
+            results[#results + 1] = { name = name, value = tonumber(value), spread = tonumber(spread),
+                stock_current = tonumber(current), stock_min = tonumber(minimum),
+                stock_max = tonumber(maximum), efficiency = tonumber(efficiency), net = tonumber(net) }
+        end
+    end
+    results._expected_count = tonumber(tostring(summary or ""):match("^%s*(%d+)%s+commodities,"))
     return results
 end
 
---- Parse production buffer into a lookup table keyed by commodity name
---- @param buffer table Array of captured lines
---- @return table {["Alloys"] = {production=45, consumption=1}, ...}
 function f2t_po_parse_production_buffer(buffer)
-    local results = {}
-
-    for _, line in ipairs(buffer) do
-        local name, prod, cons =
-            line:match("^%s+(.-):%s+production%s+(%d+),%s+consumption%s+(%d+)")
-
+    local results, seen = {}, {}
+    for _, text in ipairs(records(buffer, "production")) do
+        local name, production, consumption = text:match(
+            "^%s*(.-):%s+production%s+(%d+),%s+consumption%s+(%d+)")
         if name then
-            results[name] = {
-                production = tonumber(prod),
-                consumption = tonumber(cons)
-            }
+            local key = name:lower()
+            if seen[key] then return {} end -- duplicate capture must not overwrite evidence
+            seen[key] = true
+            results[name] = { production = tonumber(production), consumption = tonumber(consumption) }
         end
     end
-
-    f2t_debug_log("[po] Parsed %d commodities from production data",
-        f2t_table_count_keys(results))
     return results
 end
 

@@ -92,9 +92,10 @@ function f2t_po_capture_timer_expired()
         f2t_debug_log("[po] Production capture complete (%d lines)", #f2t_po.capture_buffer)
         local parsed = f2t_po_parse_production_buffer(f2t_po.capture_buffer)
         local callback = f2t_po.callback
+        local metadata = { planet = f2t_po.header_planet, kind = "production" }
         f2t_po_reset()
         if callback then
-            callback(parsed)
+            callback(parsed, nil, metadata)
         end
     elseif f2t_po.phase == "capturing_exchange" then
         -- Exchange timed out without seeing summary line
@@ -108,18 +109,19 @@ end
 -- ========================================
 
 --- Called by the exchange summary trigger when exchange capture is complete
-function f2t_po_capture_exchange_complete()
+function f2t_po_capture_exchange_complete(summary)
     if f2t_po.timer_id then
         killTimer(f2t_po.timer_id)
         f2t_po.timer_id = nil
     end
 
     f2t_debug_log("[po] Exchange capture complete (%d lines)", #f2t_po.capture_buffer)
-    local parsed = f2t_po_parse_exchange_buffer(f2t_po.capture_buffer)
+    local parsed = f2t_po_parse_exchange_buffer(f2t_po.capture_buffer, summary)
     local callback = f2t_po.callback
+    local metadata = { planet = f2t_po.header_planet, kind = "exchange" }
     f2t_po_reset()
     if callback then
-        callback(parsed)
+        callback(parsed, nil, metadata)
     end
 end
 
@@ -132,7 +134,7 @@ function f2t_po_capture_abort(message)
     local callback = f2t_po.callback
     f2t_po_reset()
     if callback then
-        callback({})
+        callback({}, message)
     end
 end
 

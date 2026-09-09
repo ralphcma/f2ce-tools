@@ -76,6 +76,26 @@ Mux.createDeclarativeCondition({
 Mux.registerWorkspace("f2ce-tools", {
     floatingPanes = {
         {
+            activeContent = "exchange_walker_live",
+            contentState = {},
+            id = "pane_15",
+            name = "Exchange Walker",
+            type = "pane",
+            floating = true,
+            floatX = 80,
+            floatY = 140,
+            floatW = 780,
+            floatH = 360,
+            hidden = false,
+            mainConsoleHost = false,
+            showTitlebar = true,
+            closeable = true,
+            movable = true,
+            resizable = true,
+            minimizable = true,
+            contentable = true
+        },
+        {
             activeContent = "fed2_local_players",
             anchor = {
                 alongV = 25.950000000001,
