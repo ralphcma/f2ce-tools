@@ -53,13 +53,15 @@ local function f2t_map_startup_topology_cancel_timer()
     topology_startup_timer_id = nil
 end
 
-local function f2t_map_startup_topology_sync()
+local f2t_map_startup_topology_sync
+f2t_map_startup_topology_sync = function(delay)
     if topology_startup_synced or topology_startup_timer_id then return end
     local ready = f2t_map_startup_topology_ready()
     if not ready then return end
 
     topology_startup_synced = true
-    topology_startup_timer_id = tempTimer(3, function()
+    if type(delay) ~= "number" then delay = 3 end
+    topology_startup_timer_id = tempTimer(delay, function()
         topology_startup_timer_id = nil
 
         local still_ready, reason = f2t_map_startup_topology_ready()
@@ -72,9 +74,14 @@ local function f2t_map_startup_topology_sync()
         end
 
         if type(f2t_map_topology_sync) == "function" then
-            f2t_map_topology_sync(nil, { silent = true, automatic = true })
+            local started, start_reason = f2t_map_topology_sync(nil, { silent = true, automatic = true })
+            if not started and start_reason == "native busy" then
+                topology_startup_synced = false
+                f2t_map_startup_topology_sync(0.5)
+            end
         end
     end)
+    if not topology_startup_timer_id then topology_startup_synced = false end
 end
 
 registerAnonymousEventHandler("gmcp.char.vitals", f2t_map_startup_topology_sync)
@@ -87,7 +94,6 @@ f2t_map_startup_topology_sync()
 registerAnonymousEventHandler("sysDisconnectionEvent", function()
     f2t_map_startup_topology_cancel_timer()
     if F2T_MAP_TOPOLOGY_CAPTURE and F2T_MAP_TOPOLOGY_CAPTURE.active
-        and F2T_MAP_TOPOLOGY_CAPTURE.automatic
         and type(f2t_map_topology_capture_cancel) == "function" then
         f2t_map_topology_capture_cancel("disconnected")
     end

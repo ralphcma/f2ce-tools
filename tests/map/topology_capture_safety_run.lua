@@ -25,6 +25,7 @@ local function scenario(options)
         armed = nil,
         close_count = 0,
         debug_messages = {},
+        busy = options.busy == true,
     }
 
     env.send = function(command) table.insert(env.sent, command) end
@@ -44,6 +45,9 @@ local function scenario(options)
     env.f2t_debug_log = function(fmt, ...)
         table.insert(env.debug_messages, string.format(fmt, ...))
     end
+    env.F2CE = { API = { v1 = { navigation = {}, commands = {
+        _nativeBlocker = function() return env.busy and {kind="speedwalk"} or nil end,
+    } } } }
 
     setmetatable(env, { __index = _G })
     local chunk, load_error
@@ -76,6 +80,53 @@ function tests.automatic_start_respects_every_gate()
         equal(#env.sent, 0, "automatic denied command count")
         equal(callback_count, 1, "automatic denied callback count")
     end
+end
+
+function tests.automatic_start_defers_to_native_reservations()
+    local env = scenario({busy=true})
+    local started, reason = env.f2t_map_topology_sync(nil,{automatic=true,silent=true})
+    equal(started,false,"busy automatic start")
+    equal(reason,"native busy","busy start reason")
+    equal(#env.sent,0,"busy automatic command count")
+    equal(env.F2T_MAP_TOPOLOGY_CAPTURE.active,false,"busy automatic capture state")
+    env.busy=false
+    check(env.f2t_map_topology_sync(nil,{automatic=true,silent=true}),"retry should start")
+    equal(env.sent[1],"display cartels","retry first command")
+end
+
+function tests.capture_start_failures_restore_inactive_state()
+    for _, kind in ipairs({"timer","send"}) do
+        local env=scenario()
+        if kind=="timer" then env.f2t_capture_arm=function() error("timer failed") end
+        else env.send=function() error("send failed") end end
+        local callbacks=0
+        local started=env.f2t_map_topology_sync(function(ok) callbacks=callbacks+1; equal(ok,false,"failure callback") end,
+            {automatic=true,silent=true})
+        equal(started,false,kind.." start")
+        equal(env.F2T_MAP_TOPOLOGY_CAPTURE.active,false,kind.." inactive")
+        equal(callbacks,1,kind.." callback count")
+    end
+end
+
+function tests.second_phase_send_failure_restores_inactive_state()
+    local env=scenario(); local callbacks=0
+    check(env.f2t_map_topology_sync(function(ok) callbacks=callbacks+1; equal(ok,false,"phase callback") end,
+        {automatic=true,silent=true}))
+    env.send=function() error("second send failed") end
+    local timer=assert(env.armed); timer()
+    equal(env.F2T_MAP_TOPOLOGY_CAPTURE.active,false,"second phase inactive")
+    equal(callbacks,1,"second phase callback count")
+end
+
+function tests.reload_retires_only_the_old_topology_capture()
+    local env=scenario(); local callbacks=0
+    check(env.f2t_map_topology_sync(function(ok) callbacks=callbacks+1; equal(ok,false,"reload callback") end,
+        {automatic=true,silent=true}))
+    env.F2T_CAPTURE_WINDOWS={other={timerId=999}}
+    local chunk=assert(loadfile(script_path)); setfenv(chunk,env); chunk()
+    equal(env.F2T_MAP_TOPOLOGY_CAPTURE.active,false,"reload inactive")
+    equal(callbacks,1,"reload callback count")
+    equal(env.F2T_CAPTURE_WINDOWS.other.timerId,999,"foreign capture preserved")
 end
 
 function tests.automatic_capture_stops_before_second_command_when_disabled()

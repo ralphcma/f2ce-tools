@@ -31,6 +31,8 @@ local function scenario(options)
         handlers = handlers,
         timers = timers,
         sync_calls = 0,
+        sync_attempts = 0,
+        busy_starts = options.busy_starts or 0,
         debug_messages = {},
     }
 
@@ -56,6 +58,11 @@ local function scenario(options)
         return env.connected
     end
     env.f2t_map_topology_sync = function()
+        env.sync_attempts = env.sync_attempts + 1
+        if env.busy_starts > 0 then
+            env.busy_starts = env.busy_starts - 1
+            return false, "native busy"
+        end
         env.sync_calls = env.sync_calls + 1
         return true
     end
@@ -112,6 +119,18 @@ function tests.enabled_connection_schedules_and_runs_once()
     equal(env.sync_calls, 1, "topology sync count")
     env:emit("gmcp.char.vitals")
     equal(#env:active_timer_ids(), 0, "completed login must not schedule again")
+end
+
+function tests.native_busy_retries_without_starting_a_command_capture()
+    local env = scenario({ busy_starts = 1 })
+    env:fire_timer(env:active_timer_ids()[1])
+    equal(env.sync_attempts, 1, "first deferred attempt count")
+    equal(env.sync_calls, 0, "busy attempt must not start topology")
+    local retry = env:active_timer_ids()
+    equal(#retry, 1, "one bounded retry timer")
+    env:fire_timer(retry[1])
+    equal(env.sync_attempts, 2, "retry attempt count")
+    equal(env.sync_calls, 1, "retry starts after reservation clears")
 end
 
 function tests.disabled_map_sends_zero_commands()

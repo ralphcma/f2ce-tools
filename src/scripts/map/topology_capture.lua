@@ -9,9 +9,25 @@
 -- System->cartel membership is NOT captured here; it accrues from GMCP as you
 -- travel, from map area userdata, and from cartel exploration.
 
-F2T_MAP_TOPOLOGY_CAPTURE = F2T_MAP_TOPOLOGY_CAPTURE or {active = false}
+local prior_capture = F2T_MAP_TOPOLOGY_CAPTURE
+if type(prior_capture) == "table" and prior_capture.active then
+    if type(f2t_capture_close) == "function" then pcall(f2t_capture_close, "topology") end
+    if prior_capture.callback then pcall(prior_capture.callback, false) end
+end
+F2T_MAP_TOPOLOGY_CAPTURE = {active = false}
 
-local function f2t_map_topology_automatic_allowed()
+local function f2t_map_topology_native_busy()
+    local api = F2CE and F2CE.API and F2CE.API.v1
+    if api then
+        if api.navigation and api.navigation._lease then return true end
+        if api.commands and (api.commands._lease or
+            (api.commands._nativeBlocker and api.commands._nativeBlocker())) then return true end
+    end
+    return F2T_SPEEDWALK_OWNER ~= nil or F2T_SPEEDWALK_ACTIVE == true
+        or F2T_SPEEDWALK_WAITING_FOR_MOVE == true
+end
+
+local function f2t_map_topology_automatic_allowed(check_busy)
     if F2T_MAP_ENABLED ~= true then return false, "mapping disabled" end
     if type(f2t_settings_get) ~= "function"
         or not f2t_settings_get("map", "topology_auto_sync") then
@@ -23,6 +39,7 @@ local function f2t_map_topology_automatic_allowed()
         connected = f2t_check_connection()
     end
     if not connected then return false, "disconnected" end
+    if check_busy and f2t_map_topology_native_busy() then return false, "native busy" end
     return true
 end
 
@@ -49,14 +66,14 @@ function f2t_map_topology_sync(callback, opts)
         if not silent then
             cecho("\n<yellow>[map]<reset> Topology sync already in progress\n")
         end
-        return false
+        return false, "already in progress"
     end
     if automatic then
-        local allowed, reason = f2t_map_topology_automatic_allowed()
+        local allowed, reason = f2t_map_topology_automatic_allowed(true)
         if not allowed then
             f2t_debug_log("[map/topology] Automatic sync skipped: %s", tostring(reason))
             if callback then callback(false) end
-            return false
+            return false, reason
         end
     end
     f2t_capture_close("topology")
@@ -72,23 +89,35 @@ function f2t_map_topology_sync(callback, opts)
         automatic = automatic,
     }
     f2t_debug_log("[map/topology] Sync started: capturing display cartels (silent=%s)", tostring(silent))
-    send("display cartels", false)
-    f2t_map_topology_capture_reset_timer()
+    if not f2t_map_topology_capture_reset_timer() then return false, "capture timer unavailable" end
+    local sent, send_error = pcall(send, "display cartels", false)
+    if not sent then
+        f2t_map_topology_capture_cancel("display cartels send failed")
+        f2t_debug_log("[map/topology] First capture command failed: %s", tostring(send_error))
+        return false, "capture send failed"
+    end
     return true
 end
 
 function f2t_map_topology_capture_reset_timer()
-    f2t_capture_arm("topology", function()
+    local ok, err = pcall(f2t_capture_arm, "topology", function()
         if F2T_MAP_TOPOLOGY_CAPTURE.active then
             f2t_map_topology_capture_phase_complete()
         end
     end)
+    if not ok or (F2T_MAP_TOPOLOGY_CAPTURE.active and F2T_CAPTURE_WINDOWS ~= nil and not
+        (F2T_CAPTURE_WINDOWS.topology and F2T_CAPTURE_WINDOWS.topology.timerId)) then
+        f2t_map_topology_capture_cancel("capture timer unavailable")
+        f2t_debug_log("[map/topology] Capture timer unavailable: %s", tostring(err))
+        return false
+    end
+    return F2T_MAP_TOPOLOGY_CAPTURE.active
 end
 
 function f2t_map_topology_capture_phase_complete()
     local capture = F2T_MAP_TOPOLOGY_CAPTURE
     if capture.automatic then
-        local allowed, reason = f2t_map_topology_automatic_allowed()
+        local allowed, reason = f2t_map_topology_automatic_allowed(false)
         if not allowed then
             f2t_map_topology_capture_cancel(reason)
             return
@@ -98,8 +127,12 @@ function f2t_map_topology_capture_phase_complete()
         capture.phase = "syndicates"
         capture.seen_start = false
         f2t_debug_log("[map/topology] Sync: capturing display syndicates")
-        send("display syndicates", false)
-        f2t_map_topology_capture_reset_timer()
+        if not f2t_map_topology_capture_reset_timer() then return end
+        local sent, send_error = pcall(send, "display syndicates", false)
+        if not sent then
+            f2t_map_topology_capture_cancel("display syndicates send failed")
+            f2t_debug_log("[map/topology] Second capture command failed: %s", tostring(send_error))
+        end
         return
     end
     f2t_map_topology_capture_finish()

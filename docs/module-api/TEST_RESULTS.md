@@ -1,5 +1,30 @@
 # Module API verification
 
+## 2026-09-09 topology capture and owned-response serialization
+
+Candidate: `f2ce-tools-3.3.0-native-ew7.mpackage`; pair with FedHauler 1.16.6.
+API 1.2.0-candidate.3 and Walker 3.4.0-native.3 remain unchanged.
+
+SHA-256: `bf327afa910db69a284b3a68c2cfedaab990fabb93eca9e9f48646505a36c9b5`.
+
+The reported `topology_capture` is F2CE's two-phase login sync. Automatic
+topology now defers to active API/native command and navigation reservations;
+a busy startup attempt reschedules without output. Capture timers are armed
+before each phase's command. Timer/transport failure, disconnect and hot reload
+clear topology's own state while preserving unrelated captures. Manual sync
+remains explicitly available.
+
+The paired consumer holds an existing public API command lease through owned
+and automated local-market responses, preventing topology/Galaxy output from
+starting inside either scan. If topology began first, it waits through both
+native 15-second phase bounds, then dispatches one owned request. Persistent
+contention remains fail-closed; no native guard was relaxed.
+
+Source and compiled package pass 74 groups, 250 Lua checks, 32 metadata checks,
+and 221 embedded-script/source matches. Paired FedHauler source/package checks
+pass 243 tests and all 17 archive members match source. No install, gameplay,
+push, release, trade-policy or Exchange Walker UI change was performed.
+
 ## 2026-09-09 Galaxy capture lifecycle and consumer handoff
 
 Candidate: `f2ce-tools-3.3.0-native-ew6.mpackage`; pair with FedHauler 1.16.5.
