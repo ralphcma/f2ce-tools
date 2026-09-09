@@ -7,7 +7,7 @@ the native `F2CE.API.v1` API and Walker. There is no separate Walker or
 API directly; older FedHauler versions still require the separate API.
 
 Baseline: F2CE 3.3.0 plus the existing map-content lifecycle repair, native API
-1.2.0 candidate.1, and Walker 3.4.0-native.4 ported from the public Walker 3.3.3
+1.2.0 candidate.1, and Walker 3.4.0-native.5 ported from the public Walker 3.3.3
 source at `e7276b81f962b3c7e4c72c6b34a161e1d3415ba6`.
 
 ## Settings and defaults
@@ -93,6 +93,13 @@ the content now reflows immediately and once more on the next event-loop turn
 when restored or revealed. This prevents a permanently black tab after its
 container receives its real size. Target-setting application remains independent
 of board rendering and the footer reports the saved target count.
+
+Candidate `native-ew9` also repairs the hot-update lifecycle. Muxlet retains a
+saved tab's `exchange_walker_live` content identity when the outgoing package
+removes its widgets. Placement now requires both that identity and a live board
+instance, and safely reapplies the registered content into the existing tab
+when the widgets are missing. Updating F2CE no longer strands an otherwise
+valid Exchange Walker tab as an empty black panel until a profile restart.
 
 **Refresh is read-only and works while OFF**. It does not make an applicable
 plan or authorize writes. Incomplete or wrong-planet responses retain the last

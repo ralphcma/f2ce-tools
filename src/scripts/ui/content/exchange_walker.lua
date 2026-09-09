@@ -31,7 +31,21 @@ local function place(content_id, first, last)
         end
     end
     if not eligible then return false, "Founder rank or higher is required" end
-    if existing_tab then return true, existing_tab.pane and existing_tab.pane.id, "existing-tab" end
+    if existing_tab then
+        -- A package/script reload destroys the prior Walker's Geyser widgets,
+        -- but Muxlet deliberately keeps the saved tab and its content ID. The
+        -- ID alone therefore does not prove that the newly loaded Walker has a
+        -- live board instance. Reapply into the existing tab when the instance
+        -- is missing; otherwise a hot update leaves a valid-looking, black tab
+        -- until the entire Mudlet profile is restarted.
+        if not ew.ui.instances[existing_tab] then
+            Mux._applyContent(existing_tab, content_id, true)
+        end
+        if existing_tab._activeContent ~= content_id or not ew.ui.instances[existing_tab] then
+            return false, "Muxlet did not rebuild the existing Exchange Walker tab"
+        end
+        return true, existing_tab.pane and existing_tab.pane.id, "existing-tab"
+    end
     if host and type(host.addTab) == "function" then
         local tab = host:addTab("Exchange Walker")
         if not tab then return false, "Muxlet could not create the Exchange Walker tab" end

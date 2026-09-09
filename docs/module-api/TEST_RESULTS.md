@@ -1,22 +1,27 @@
 # Module API verification
 
-## 2026-09-09 Exchange Walker Geyser and hidden-tab recovery
+## 2026-09-09 Exchange Walker hot-update board recovery
 
-Candidate: `f2ce-tools-3.3.0-native-ew8.mpackage`; Walker
-3.4.0-native.4. API 1.2.0-candidate.3 is unchanged.
+Candidate: `f2ce-tools-3.3.0-native-ew9.mpackage`; Walker
+3.4.0-native.5. API 1.2.0-candidate.3 is unchanged.
 
-SHA-256: `dae6ec52906406e819eca5f6df212e0a53a0686dcc6c9cc7850bf9e956dbea9c`.
+SHA-256: `263fdffba7df8da8b7e80a3e1e32a4d1bf811d4f8867dfccfe5cec8b32c32e56`.
 
 The Exchange Walker board now explicitly renders CSS-colored labels in
 Geyser `nocolor` mode, bypassing Mudlet 5.0.1's color parser. Content applied
 to a hidden zero-sized Mux tab reflows when restored/revealed and again on the
-next event-loop turn. This fixes the black tab while preserving the existing
-Who/Events/Exchange host, Founder gate, bottom controls, and map/Galaxy content.
+next event-loop turn. The existing-tab placement path now also verifies that
+the newly loaded Walker owns a live board instance. If a hot package update
+removed the outgoing widgets while Muxlet retained the saved content ID, the
+board is reapplied into that same tab instead of remaining black. The existing
+Who/Events/Exchange host, Founder gate, bottom controls, and map/Galaxy content
+remain unchanged.
 
-The Walker suite passes 24 groups, including exact four-target Mux Settings
+The Walker suite passes 25 groups, including exact four-target Mux Settings
 persistence, render-failure isolation, `0x0` hidden-tab recovery, and explicit
-color-parser bypass. Source and exact-package runs pass all 75 native groups:
-API 23, adapter 5, Walker 24, startup 7, topology 8, map lifecycle 1 and Galaxy
+color-parser bypass, plus hot-reload reconstruction of an existing tab. Source
+and exact-package runs pass all 76 native groups: API 23, adapter 5, Walker 25,
+startup 7, topology 8, map lifecycle 1 and Galaxy
 lifecycle 7. All 250 Lua checks, 32 metadata checks and 221 compiled-script/source
 matches pass. No profile, gameplay command, push, release, or API policy change
 is performed.

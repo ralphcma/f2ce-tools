@@ -558,6 +558,28 @@ function tests.hidden_zero_sized_tab_reflows_when_revealed()
     for _, message in ipairs(e.messages) do assert(not message:find("Mux content failed", 1, true), message) end
 end
 
+function tests.existing_tab_is_rebuilt_after_hot_reload_widget_teardown()
+    local e = environment({tabHost=true}); e.advance(0.25)
+    local ew = e.F2T_EXCHANGE_WALKER
+    local target = e.Mux.panes.pane_2._tabs[4]
+    local definition = assert(e.Mux._content.exchange_walker_live)
+    assert(ew.ui.instances[target], "initial board instance")
+
+    -- Muxlet preserves the tab/content identity across a package reload while
+    -- the outgoing Walker removes its Geyser widgets.
+    definition.remove(target)
+    eq(target._activeContent, "exchange_walker_live", "saved content identity remains")
+    eq(ew.ui.instances[target], nil, "outgoing board widgets were removed")
+
+    local placed, pane, status = ew.ui.placeRegisteredContent(
+        ew.ui.content_id, ew.ui.preferred_pane_start, ew.ui.preferred_pane_end)
+    assert(placed, tostring(pane))
+    eq(pane, "pane_2")
+    eq(status, "existing-tab")
+    assert(ew.ui.instances[target], "existing tab board was rebuilt")
+    assert(ew.ui.instances[target].empty.text:find("No exchange loaded", 1, true))
+end
+
 function tests.trailing_blanks_stop_at_message_or_timeout_and_manual_output_is_visible()
     local e = environment(); local ew = e.F2T_EXCHANGE_WALKER
     assert(ew.inspect("Tempest"))
