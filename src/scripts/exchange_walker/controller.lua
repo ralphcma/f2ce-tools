@@ -16,7 +16,7 @@ if type(previous) == "table" and type(previous.shutdown) == "function" then prev
 local EW = { NATIVE = true }
 F2T_EXCHANGE_WALKER = EW
 
-EW.VERSION = "3.4.0-native.2"
+EW.VERSION = "3.4.0-native.3"
 EW.API_CONTRACT = "ExchangeWalkerLive/1.0"
 EW.MIN_F2CE_VERSION = "3.3.0"
 EW.enabled = false
@@ -263,7 +263,13 @@ local function state_payload()
 end
 
 local function update_ui()
-  if EW.ui.updateTable then EW.ui.updateTable() end
+  if EW.ui.updateTable then
+    local ok, reason = pcall(EW.ui.updateTable)
+    if not ok and EW.ui.render_error ~= tostring(reason) then
+      main_notice("red", "Board display failed; controls and saved settings remain independent: " .. tostring(reason))
+    end
+    EW.ui.render_error = not ok and tostring(reason) or nil
+  end
   local state = EW.enabled and "ON" or "OFF"
   local activity = EW.applying and "APPLYING" or (EW.busy and "CAPTURING" or "IDLE")
   local plan_text = EW.plan and string.format("%d changes", #EW.plan.actions) or "no plan"

@@ -70,8 +70,8 @@ local function apply_runtime(values)
 end
 
 local function invalidate()
-    if EW.cancel then EW.cancel("Exchange Walker settings changed; run a new preview or explicitly restart the timer.") end
     EW.plan = nil
+    if EW.cancel then EW.cancel("Exchange Walker settings changed; run a new preview or explicitly restart the timer.") end
     if EW.refresh then EW.refresh() end
 end
 
@@ -83,6 +83,8 @@ for _, field in ipairs(fields) do
         min = field[4], max = field[5],
         description = key == "interval_minutes"
             and "Default 30 minutes. Saving a preference never arms scheduled automation. Use AUTO ON explicitly."
+            or key == "targets"
+                and "Comma-separated planet names, e.g. Tempest, Amsterdam, Holland, Denmark. Click Apply beside this field to save for this profile. Saving stops the timer; use AUTO ON explicitly."
             or "Saved per profile. Changes invalidate previews and stop the running timer. Limits are in tons.",
         validator = function(value)
             local decoded, why = decode(key, value)
@@ -102,12 +104,12 @@ for _, field in ipairs(fields) do
     f2t_settings_on_change(ns, key, function()
         if writing then return end
         local values, why = read_config()
-        invalidate()
         if values then apply_runtime(values)
         else
             EW.settings_error = "Invalid saved exchange policy: " .. tostring(why)
             if EW.notice then EW.notice("red", EW.settings_error) end
         end
+        invalidate()
     end)
 end
 
@@ -145,8 +147,8 @@ function settings.configure(changes, save)
             return false, reason
         end
     end
-    invalidate()
     apply_runtime(clean)
+    invalidate()
     return true
 end
 
@@ -218,8 +220,8 @@ function settings.remove()
     writing = defaults
     for _, field in ipairs(fields) do f2t_settings_clear(field[2], field[1]) end
     writing, loaded = false, false
-    invalidate()
     apply_runtime(defaults)
+    invalidate()
     -- The old standalone INI is an untouched migration backup, not ours to delete.
     return true
 end

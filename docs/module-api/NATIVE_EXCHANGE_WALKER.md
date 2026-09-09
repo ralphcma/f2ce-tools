@@ -7,7 +7,7 @@ the native `F2CE.API.v1` API and Walker. There is no separate Walker or
 API directly; older FedHauler versions still require the separate API.
 
 Baseline: F2CE 3.3.0 plus the existing map-content lifecycle repair, native API
-1.2.0 candidate.1, and Walker 3.4.0-native.2 ported from the public Walker 3.3.3
+1.2.0 candidate.1, and Walker 3.4.0-native.3 ported from the public Walker 3.3.3
 source at `e7276b81f962b3c7e4c72c6b34a161e1d3415ba6`.
 
 ## Settings and defaults
@@ -33,6 +33,13 @@ Saving does not arm or start anything. Invalid field combinations are rejected.
 Changing settings cannot retroactively recall a command already sent to the game.
 The internal confirmation/capture timeouts are protocol safeguards, not user
 preferences. Settings persistence belongs to Muxlet's existing profile storage.
+
+For example, enter `Tempest, Amsterdam, Holland, Denmark` in **Owned exchange
+targets** and click **Apply beside that settings field**. The board footer
+shows `4 targets`; hover for the saved list. The board's separate **Apply** button
+applies an unexpired preview to the game; it does not save the planet list.
+Refresh alone does not create a preview. Each Mudlet profile retains its own
+list and automation state; no account/profile folders are shared or edited.
 
 ## Upgrade and lifecycle
 
@@ -66,6 +73,17 @@ Commodity, Spread, Current, Min, Max, Efficiency and Net. Headers sort; numeric
 cells align right and signed Net/stock colors distinguish positive/negative
 values. Header and body widths resize together. Refresh, Preview, ON/OFF, Apply,
 Auto, Cancel, Settings and Clear controls are at the bottom.
+Narrow panes use `Spr%`, `Stock`, and `Eff%` headings with full-name tooltips,
+and two rows of three action buttons. The scrollable table follows the current
+viewport height, including when empty. A visible empty-state explains Refresh.
+
+Candidate `native-ew3` fixes a Lua multiple-return bug: the HTML escaping
+helper leaked `gsub`'s replacement count to Geyser as an invalid numeric color,
+causing `GeyserColor.lua` / `next_num` initialization failures. A settings edit
+could then save to Muxlet but fail during repaint before updating the runtime
+target list. Escaping now returns only text, accepted settings update runtime
+before repaint, and display exceptions cannot interrupt lifecycle updates or
+settings invalidation. Previously saved native lists are loaded on upgrade.
 
 **Refresh is read-only and works while OFF**. It does not make an applicable
 plan or authorize writes. Incomplete or wrong-planet responses retain the last

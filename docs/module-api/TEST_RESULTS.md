@@ -1,5 +1,31 @@
 # Module API verification
 
+## 2026-09-09 Exchange Walker color/settings/layout repair
+
+Candidate: `f2ce-tools-3.3.0-native-ew3.mpackage`, Walker 3.4.0-native.3.
+Native API and FedHauler are unchanged in this repair.
+
+SHA-256: `59ffff8eb9bb71e15c8ceaba3f66b79a342db61f14b74d945dfdef960849a446`.
+
+- 249 Lua syntax and 32 metadata checks passed.
+- API 20, adapter 4, Walker 23, map startup 6, topology 4, map lifecycle 1
+  groups passed: 58 total, against both source and the compiled package.
+- 221 embedded scripts matched the tested source.
+- Strengthening the Geyser echo mock to reject a numeric second argument
+  reproduced the color crash before the patch (16 failing Walker groups).
+- Exact `tempest, amsterdam, holland, denmark` Settings edits update the runtime
+  four-target list, survive a mock profile reload, remain isolated from another
+  profile, and send no commands until explicitly armed and started.
+- An injected board repaint failure no longer interrupts settings application,
+  preview invalidation, or cancellation. Target and interval defaults are visible.
+- Empty and populated table geometry checked at 417x828, 643x450 and 1000x1000;
+  compact/full headings, bottom controls, viewport height, sorting, header/body
+  alignment, blank suppression and map/Galaxy isolation remain covered.
+
+No live account or profile was modified; actual Qt appearance still needs a
+test-profile check. This artifact does not claim to fix the separately reported
+futures owned-refresh navigation issue.
+
 ## 2026-09-09 native consumer services / exchange board candidate
 
 Candidate: `f2ce-tools-3.3.0-native-ew2.mpackage`, API 1.2.0-candidate.1,

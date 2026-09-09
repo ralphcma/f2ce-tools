@@ -63,7 +63,12 @@ local function environment(options)
     local function widget(spec, parent)
         local w = { name = spec.name, spec = spec, parent = parent, history = {} }
         if spec.name then e.widgets[spec.name] = w end
-        function w:echo(text) self.text = text end
+        function w:echo(text, color)
+            -- Geyser Label:echo treats a second argument as a color. A bare
+            -- gsub return leaks its numeric replacement count into this slot.
+            assert(color == nil or type(color) == "string" or type(color) == "table", "invalid Geyser echo color")
+            self.text = text
+        end
         function w:cecho(text) self.history[#self.history + 1] = text end
         function w:setStyleSheet() end
         function w:setClickCallback(fn) self.click = fn end
@@ -227,6 +232,29 @@ function tests.policy_validation_and_invalidation()
         { name = "NanoFabrics", stock_current = -1, stock_min = 0, stock_max = 0, spread = 6 }, _expected_count = 1,
     }, { NanoFabrics = { production = 1, consumption = 2 } }, "room", "Tempest"))
     eq(#plan.rows, 0); eq(#plan.actions, 0)
+end
+function tests.settings_ui_targets_reach_runtime_and_remain_profile_local()
+    local e = environment({tabHost=true}); e.advance(0.25)
+    local ew = e.F2T_EXCHANGE_WALKER
+    assert(e.Mux.settings.set("ew_general", "targets", "tempest, amsterdam, holland, denmark"))
+    eq(table.concat(ew.settings.targets, ","), "amsterdam,denmark,holland,tempest")
+    eq(#e.sent, 0); eq(ew.scheduler.enabled, false); eq(ew.plan, nil)
+    local other = environment({tabHost=true}); other.advance(0.25)
+    eq(#other.F2T_EXCHANGE_WALKER.settings.targets, 0)
+    local reloaded = environment({data=e.Mux.settings._data})
+    eq(table.concat(reloaded.F2T_EXCHANGE_WALKER.settings.targets, ","), "amsterdam,denmark,holland,tempest")
+    eq(reloaded.F2T_EXCHANGE_WALKER.scheduler.enabled, false); eq(#reloaded.sent, 0)
+    assert(ew.on()); assert(ew.autoOn())
+    eq(#ew.scheduler.targets, 4); eq(e.sent[1], "display exchange amsterdam")
+    ew.cancel()
+end
+function tests.settings_remain_consistent_when_board_render_fails()
+    local e = environment(); local ew = sample(e, "Tempest")
+    ew.ui.updateTable = function() error("simulated display-only failure") end
+    assert(e.Mux.settings.set("ew_general", "targets", "Tempest, Denmark"))
+    eq(table.concat(ew.settings.targets, ","), "Denmark,Tempest")
+    eq(ew.plan, nil); eq(ew.busy, false); eq(ew.scheduler.enabled, false)
+    eq(#e.sent, 2)
 end
 function tests.complete_capture_and_confirmed_commands()
     local e = environment(); local ew = sample(e, "Tempest")
@@ -449,7 +477,7 @@ end
 function tests.board_refresh_is_read_only_validated_and_cancelable()
     local e = environment({tabHost=true}); e.advance(0.25); local ew = e.F2T_EXCHANGE_WALKER
     local pane = e.Mux.panes.pane_2; local instance = ew.ui.instances[pane._tabs[4]]
-    for _, control in pairs(instance.controls) do assert(tostring(control.spec.y):find("100%-", 1, true)) end
+    for _, control in pairs(instance.controls) do assert(control.spec.y >= instance.status.spec.y + 40) end
     eq(#instance.headers, 7); eq(#ew.ui.boardColumns, 7)
     assert(ew.inspect("Tempest")); eq(ew.enabled, false); eq(e.sent[1], "display exchange Tempest")
     e.finishCapture("exchange", "Tempest", {
@@ -474,6 +502,44 @@ function tests.board_refresh_is_read_only_validated_and_cancelable()
     instance.controls.cancel.click(); eq(e.f2t_po.phase, "idle"); eq(e.F2CE.API.v1.commands._lease, nil)
     late({}, nil, {planet="Tempest"}); eq(#ew.board.rows, 2); eq(ew.plan, nil)
     assert(not ew.inspect("Tempest;quit")); eq(#e.sent, 3)
+end
+
+function tests.board_fills_narrow_and_resized_panes_without_color_errors()
+    local e = environment({tabHost=true}); e.advance(0.25)
+    local ew = e.F2T_EXCHANGE_WALKER; local target = e.Mux.panes.pane_2._tabs[4]
+    local instance = assert(ew.ui.instances[target])
+    for _, message in ipairs(e.messages) do assert(not message:find("Mux content failed", 1, true), message) end
+    eq(instance.input:getText(), "Tempest"); eq(#e.sent, 0)
+    assert(instance.empty.text:find("No exchange loaded", 1, true))
+    assert(instance.status.text:find("OFF | AUTO OFF | 0 targets | 30m", 1, true))
+    assert(instance.controls.toggle.text:find("ON", 1, true))
+    assert(instance.controls.auto.text:find("AUTO ON", 1, true))
+    for _, size in ipairs({{417,828},{643,450},{1000,1000},{417,828}}) do
+        target.content:resize(size[1], size[2]); ew.ui.resizeTable(target); ew.ui.updateTable()
+        eq(instance.background:get_height(), size[2])
+        eq(instance.body:get_height(), instance.scroll:get_height())
+        eq(instance.scroll.spec.y + instance.scroll:get_height() + 4, instance.status.spec.y)
+        for _, control in pairs(instance.controls) do
+            assert(control.spec.y >= instance.status.spec.y + 40)
+            assert(control.spec.y + control:get_height() <= size[2])
+            assert(control.spec.x + control:get_width() <= size[1])
+        end
+        local width = 0
+        for _, header in ipairs(instance.headers) do eq(header.spec.x, width); width = width + header:get_width() end
+        eq(width, size[1]-17)
+        eq(instance.columns[2].label, size[1] < 717 and "Spr%" or "Spread")
+        eq(instance.columns[6].label, size[1] < 717 and "Eff%" or "Efficiency")
+    end
+    assert(ew.inspect("Tempest"))
+    e.finishCapture("exchange", "Tempest", {
+        "Pharmaceuticals: value 100ig/ton Spread: 40% Stock: current 20000/min 10000/max 20000 Efficiency: 275% Net: 24",
+    }, "1 commodities, summary")
+    assert(instance.empty.hidden)
+    local name = e.widgets["f2tsb_" .. instance.table_id .. "_r1_c1"]
+    eq(name.tooltip, "Pharmaceuticals")
+    instance.controls.clear.click(); assert(not instance.empty.hidden)
+    ew.board.message = 'captured <name> & "quoted"'; ew.ui.updateTable()
+    assert(instance.status.text:find("&lt;name&gt;", 1, true))
 end
 
 function tests.trailing_blanks_stop_at_message_or_timeout_and_manual_output_is_visible()

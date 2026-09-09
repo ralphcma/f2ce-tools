@@ -2,7 +2,7 @@
 -- Remote exchange board using the same sortable table system as Exchange.
 local EW = F2T_EXCHANGE_WALKER
 local view_id, view_api, view_session = "f2ce.exchange_walker_view", nil, nil
-local board = { rows = {}, planet = nil, captured_at = nil, message = "Enter a planet below, then Refresh." }
+local board = { rows = {}, planet = nil, captured_at = nil, message = "Refresh reads an exchange while OFF. ON → Preview → Apply changes it." }
 EW.board = board
 local function api() return F2CE and F2CE.API and F2CE.API.v1 end
 function EW.rankAllowed()
@@ -14,7 +14,9 @@ function EW.cancelView(reason)
     if view_api then view_api.modules.disable(view_id, reason or "view_cancelled") end
 end
 local function escape(value)
-    return tostring(value or ""):gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"):gsub('"', "&quot;")
+    -- gsub also returns a replacement count. Never pass it to Label:echo as
+    -- the optional color argument (Geyser.Color.parse cannot parse a number).
+    return (tostring(value or ""):gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"):gsub('"', "&quot;"))
 end
 local function copy(value)
     if type(value) ~= "table" then return value end
@@ -70,13 +72,13 @@ function EW.inspect(planet)
 end
 
 local columns = {
-    { key = "name", label = "Commodity", scrollbox_pct = 26, default_sort = "asc" },
-    { key = "spread", label = "Spread", scrollbox_pct = 10 },
-    { key = "stock_current", label = "Current", scrollbox_pct = 14 },
-    { key = "stock_min", label = "Min", scrollbox_pct = 12 },
-    { key = "stock_max", label = "Max", scrollbox_pct = 12 },
-    { key = "efficiency", label = "Efficiency", scrollbox_pct = 14 },
-    { key = "net", label = "Net", scrollbox_pct = 12 },
+    { key = "name", label = "Commodity", scrollbox_pct = 28, default_sort = "asc" },
+    { key = "spread", label = "Spread", compact = "Spr%", scrollbox_pct = 9.5 },
+    { key = "stock_current", label = "Current", compact = "Stock", scrollbox_pct = 12.5 },
+    { key = "stock_min", label = "Min", scrollbox_pct = 12.5 },
+    { key = "stock_max", label = "Max", scrollbox_pct = 12.5 },
+    { key = "efficiency", label = "Efficiency", compact = "Eff%", scrollbox_pct = 12 },
+    { key = "net", label = "Net", scrollbox_pct = 13 },
 }
 local function proposal(row, key)
     if not EW.plan or EW.plan.planet ~= board.planet or EW.plan.applied then return nil end
@@ -87,10 +89,15 @@ end
 for _, column in ipairs(columns) do
     local key = column.key
     column.sortable = true
-    column.render_label = function(value, row, cell)
+    column.render_label = function(value, row, cell, definition)
         local number = tonumber(value)
         local color = key == "name" and "#ce91e8" or "#d8d8d8"
         local text = tostring(value or "—")
+        local font = definition and definition.font_pt or 9
+        if key == "name" then
+            local limit = math.max(4, math.floor((cell:get_width() - 6) / (font * 0.81)))
+            if #text > limit then text = text:sub(1, limit - 1) .. "~" end
+        end
         if key == "spread" or key == "efficiency" then text = text .. "%" end
         if key == "net" and number and number > 0 then text = "+" .. text end
         if key == "net" or key == "stock_current" then
@@ -99,15 +106,15 @@ for _, column in ipairs(columns) do
         local proposed = proposal(row, key)
         local changed = proposed ~= nil and proposed ~= number
         if changed then color = "#65dbff" end
-        cell:echo(string.format("<div align='%s' style='font-family:Consolas,monospace;font-size:9pt;color:%s;'>%s</div>",
-            key == "name" and "left" or "right", color, escape(text)))
+        cell:echo(string.format("<div align='%s' style='white-space:nowrap;font-family:Consolas,monospace;font-size:%dpt;color:%s;'>%s</div>",
+            key == "name" and "left" or "right", font, color, escape(text)))
         cell:setToolTip(changed and string.format("%s: observed %s → proposed %s. Apply requires an explicit reviewed plan.", row.name, tostring(value), tostring(proposed)) or tostring(value))
         cell:setClickCallback(function() end) -- informational cells never trade
     end
 end
 EW.ui.boardColumns = columns
 local function label(parent, name, x, y, width, height, text, action)
-    local widget = Geyser.Label:new({ name = name, x = x, y = y, width = width, height = height }, parent)
+    local widget = Geyser.Label:new({ name = name, x = x, y = y, width = width, height = height, fgColor = "#d8d8d8" }, parent)
     widget:setStyleSheet("background-color:#171b29;color:#ddd;border:1px solid #353c50;font-family:Consolas;font-size:9pt;")
     widget:echo(text)
     if action then widget:setClickCallback(action) end
@@ -116,14 +123,47 @@ end
 function EW.ui.resizeTable(target)
     local instance = EW.ui.instances[target]
     if not instance or not instance.table_id then return end
-    local width = math.max(100, target.content:get_width() - 17)
+    local pane_width, pane_height = math.max(1, target.content:get_width()), math.max(1, target.content:get_height())
+    local width = math.max(1, pane_width - 17)
+    local footer_y = math.max(44, pane_height - 136)
+    local function place(widget, x, y, w, h) widget:move(x, y); widget:resize(w, h) end
+    place(instance.background, 0, 0, pane_width, pane_height)
+    place(instance.title, 0, 0, pane_width, 22)
+    place(instance.header, 0, 22, pane_width, 22)
+    place(instance.scroll, 0, 44, pane_width, math.max(0, footer_y - 48))
+    place(instance.status, 0, footer_y, pane_width, 40)
+    local input_end, refresh_end = math.floor(pane_width * 0.60), math.floor(pane_width * 0.80)
+    place(instance.planet_label, 0, footer_y + 40, 44, 28)
+    place(instance.input, 44, footer_y + 40, math.max(1, input_end - 44), 28)
+    place(instance.controls.refresh, input_end, footer_y + 40, refresh_end - input_end, 28)
+    place(instance.controls.preview, refresh_end, footer_y + 40, pane_width - refresh_end, 28)
+    for index, key in ipairs({ "toggle", "apply", "auto", "cancel", "settings", "clear" }) do
+        local col = (index - 1) % 3
+        local left, right = math.floor(pane_width * col / 3), math.floor(pane_width * (col + 1) / 3)
+        place(instance.controls[key], left, footer_y + 72 + math.floor((index - 1) / 3) * 32, right - left, 28)
+    end
+    place(instance.empty, 8, 12, math.max(1, width - 16), 90)
     instance.body:resize(width, instance.body:get_height())
     local x = 0
-    for index, column in ipairs(columns) do
-        local cell_width = index == #columns and width - x or math.floor(width * column.scrollbox_pct / 100)
+    for index, column in ipairs(instance.columns) do
+        local compact = width < 700
+        column.label = compact and (columns[index].compact or columns[index].label) or columns[index].label
+        column.font_pt = compact and 8 or 9
+        column.header_css = "background-color:transparent;border:none;padding:0 2px;color:#d8d8d8;font-family:Consolas;font-size:" .. column.font_pt .. "pt;"
+        column.header_active_css = column.header_css .. "color:#65dd75;"
+        local cell_width = index == #instance.columns and width - x or math.floor(width * column.scrollbox_pct / 100)
         instance.headers[index]:move(x, 0); instance.headers[index]:resize(cell_width, 22); x = x + cell_width
     end
     f2tTableOnResize(instance.table_id, width)
+end
+local function update_status(instance, message)
+    local state = (EW.enabled and "ON" or "OFF") .. " | " .. (EW.scheduler.enabled and "AUTO ON" or "AUTO OFF")
+        .. " | " .. #EW.settings.targets .. " targets | " .. EW.settings.interval_minutes .. "m"
+    -- Keep the footer compact; the complete diagnostic is available on hover.
+    local limit = math.max(20, math.floor(instance.status:get_width() / 6.5))
+    local detail = #message > limit and message:sub(1, limit - 3) .. "..." or message
+    instance.status:echo("<div style='font-size:8pt;'>" .. escape(state) .. "<br>" .. escape(detail) .. "</div>")
+    instance.status:setToolTip(message .. "\nTargets: " .. (#EW.settings.targets > 0 and table.concat(EW.settings.targets, ", ") or "none; set these in Settings"))
 end
 function EW.ui.updateTable()
     for target, instance in pairs(EW.ui.instances) do
@@ -132,8 +172,14 @@ function EW.ui.updateTable()
             instance.title:echo(escape(rank and ((board.planet or "Exchange Walker") .. " | " .. (board.captured_at and os.date("%H:%M:%S", board.captured_at) or "no capture")) or "Founder rank required"))
             local message = EW.plan and EW.plan.planet == board.planet and not EW.plan.applied
                 and (#EW.plan.actions .. " reviewed changes. Cyan cells: hover to compare observed → proposed.") or board.message
-            instance.status:echo(escape(message))
+            update_status(instance, message)
+            if instance.input:getText() == "" and EW.settings.targets[1] then instance.input:print(EW.settings.targets[1]) end
             f2tTableSetData(instance.table_id, rank and copy(board.rows) or {})
+            if not rank or #board.rows == 0 then
+                instance.empty:echo(not rank and "Founder rank or higher is required." or board.captured_at
+                    and "This exchange returned no commodities." or "<b>No exchange loaded</b><br>Choose a planet below and click Refresh.<br>Read-only — works while OFF.<br>Scheduled planets are saved separately in Settings.")
+                instance.empty:show()
+            else instance.empty:hide() end
             if Mux.reassertHidden then Mux.reassertHidden(target.content) end
         end
     end
@@ -143,14 +189,17 @@ function EW.ui.buildTable(target)
     if target.contentBg then target.contentBg:hide() end
     EW.ui.instance_counter = EW.ui.instance_counter + 1
     local id = "ew_board_" .. EW.ui.instance_counter
-    local instance = { target = target, table_id = id, controls = {}, headers = {} }
+    local instance = { target = target, table_id = id, controls = {}, headers = {}, columns = copy(columns) }
     EW.ui.instances[target] = instance
     EW.ui.registered_target = target
+    instance.background = label(target.content, id .. "background", 0, 0, "100%", "100%", "")
     instance.title = label(target.content, id .. "title", 0, 0, "100%", 22, "Exchange Walker")
     instance.header = label(target.content, id .. "header", 0, 22, "100%", 22, "")
     instance.scroll = Geyser.ScrollBox:new({ name = id .. "scroll", x = 0, y = 44, width = "100%", height = "100%-140px" }, target.content)
     instance.body = label(instance.scroll, id .. "body", 0, 0, "100%", 1000, "")
-    f2tTableCreate(id, columns)
+    instance.empty = label(instance.body, id .. "empty", 8, 12, "100%-16px", 90, "")
+    instance.empty:setStyleSheet("background-color:transparent;border:none;color:#aaa;font-family:Consolas;font-size:9pt;")
+    f2tTableCreate(id, instance.columns)
     f2tTableSetScrollbox(id, instance.body, math.max(100, target.content:get_width() - 17), 20, instance.scroll)
     local header_map = {}
     for index, column in ipairs(columns) do
@@ -162,8 +211,12 @@ function EW.ui.buildTable(target)
     end
     f2tTableSetColHdrs(id, header_map)
     instance.status = label(target.content, id .. "status", 0, "100%-94px", "100%", 22, "")
+    instance.planet_label = label(target.content, id .. "planet_label", 0, 0, 44, 28, "Planet")
     local input = Geyser.CommandLine:new({ name = id .. "planet", x = 0, y = "100%-70px", width = "60%", height = 30 }, target.content)
-    input:print(board.planet or EW.settings.targets[1] or "")
+    local current = api() and api().data.get("room")
+    local vitals = api() and api().data.get("vitals")
+    local owned = current and vitals and current.owner == vitals.name and EW.policy.safePlanet(current.area)
+    input:print(board.planet or EW.settings.targets[1] or owned or "")
     instance.input = input
     local function refresh()
         local ok, reason = EW.inspect(input:getText())
@@ -176,15 +229,15 @@ function EW.ui.buildTable(target)
         {"cancel", "Cancel", "cancel"}, {"settings", "Settings"}, {"clear", "Clear"} }
     for index, button in ipairs(buttons) do
         local action = button[3]
-        instance.controls[button[1]] = label(target.content, id .. button[1], ((index - 1) * 100 / 6) .. "%", "100%-36px", (100 / 6) .. "%", 32, button[2], function()
+        instance.controls[button[1]] = label(target.content, id .. button[1], 0, 0, 1, 28, "<center>" .. button[2] .. "</center>", function()
             if action then EW[action]()
             elseif button[1] == "settings" then EW.settings.open()
-            else board.rows, board.planet, board.captured_at = {}, nil, nil; EW.ui.clear(); EW.ui.updateTable() end
+            else board.rows, board.planet, board.captured_at = {}, nil, nil; board.message = "Choose a planet below and Refresh."; EW.ui.clear(); EW.ui.updateTable() end
         end)
     end
     -- Keep operational messages in one status line, not mixed into data rows.
     instance.console = { cecho = function(_, text)
-        board.message = tostring(text):gsub("<[^>]+>", ""):gsub("\n", " "); instance.status:echo(escape(board.message))
+        board.message = tostring(text):gsub("<[^>]+>", ""):gsub("\n", " "); update_status(instance, board.message)
     end, clear = function() end }
     EW.ui.resizeTable(target); EW.ui.updateTable(); EW.refresh()
 end
@@ -193,7 +246,7 @@ function EW.ui.destroyTable(target)
     if not instance or not instance.table_id then return end
     f2tTableDestroy(instance.table_id)
     for _, header in ipairs(instance.headers) do header:hide(); if header.delete then header:delete() end end
-    for _, key in ipairs({ "title", "header", "scroll", "body", "status", "input" }) do
+    for _, key in ipairs({ "empty", "title", "header", "body", "scroll", "status", "input", "planet_label", "background" }) do
         local widget = instance[key]; if widget then widget:hide(); if widget.delete then widget:delete() end end
     end
 end

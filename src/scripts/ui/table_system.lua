@@ -130,10 +130,10 @@ function f2tTableUpdateScrollboxHeader(tableId, colHdrs)
         local lbl = colHdrs[col.key]
         if lbl then
             if col.key == active then
-                lbl:setStyleSheet(_HDR_ACTIVE_CSS)
+                lbl:setStyleSheet(col.header_active_css or _HDR_ACTIVE_CSS)
                 lbl:echo(col.label .. (asc and " ▲" or " ▼"))
             else
-                lbl:setStyleSheet(_HDR_CSS)
+                lbl:setStyleSheet(col.header_css or _HDR_CSS)
                 lbl:echo(col.label)
             end
             if col.sortable then
@@ -200,9 +200,11 @@ function f2tTableRenderScrollbox(tableId)
     local cw   = sb.contentW
     local rowH = sb.rowH
 
-    if not sb.minHeight and sb.scrollWidget then
+    -- The viewport may grow or shrink after the initial render. A cached
+    -- first height leaves an empty gap when a Mux pane is enlarged.
+    if sb.scrollWidget then
         local sh = sb.scrollWidget:get_height()
-        if sh > 30 then sb.minHeight = sh end
+        if sh >= 0 then sb.minHeight = sh end
     end
     local minH = sb.minHeight or 1000
 
