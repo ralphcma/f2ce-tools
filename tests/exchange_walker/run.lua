@@ -67,7 +67,7 @@ local function environment(options)
             -- Geyser Label:echo treats a second argument as a color. A bare
             -- gsub return leaks its numeric replacement count into this slot.
             assert(color == nil or type(color) == "string" or type(color) == "table", "invalid Geyser echo color")
-            self.text = text
+            self.text, self.echo_color = text, color or self.echo_color
         end
         function w:cecho(text) self.history[#self.history + 1] = text end
         function w:setStyleSheet() end
@@ -141,7 +141,8 @@ local function environment(options)
         if options.tabHost then
             local pane = { id = "pane_2", _tabs = {}, _hiddenTabs = {}, active = "who" }
             function pane:addTab(name)
-                local tab = { id = name, pane = self, content = widget({}), contentBg = widget({}) }
+                local geometry = options.zeroSizedTab and { width = 0, height = 0 } or {}
+                local tab = { id = name, pane = self, content = widget(geometry), contentBg = widget({}) }
                 self._tabs[#self._tabs + 1] = tab; return tab
             end
             for _, name in ipairs({ "who", "events", "exchange" }) do
@@ -514,6 +515,7 @@ function tests.board_fills_narrow_and_resized_panes_without_color_errors()
     assert(instance.status.text:find("OFF | AUTO OFF | 0 targets | 30m", 1, true))
     assert(instance.controls.toggle.text:find("ON", 1, true))
     assert(instance.controls.auto.text:find("AUTO ON", 1, true))
+    eq(instance.background.echo_color, "nocolor", "board labels bypass Geyser color parsing")
     for _, size in ipairs({{417,828},{643,450},{1000,1000},{417,828}}) do
         target.content:resize(size[1], size[2]); ew.ui.resizeTable(target); ew.ui.updateTable()
         eq(instance.background:get_height(), size[2])
@@ -540,6 +542,20 @@ function tests.board_fills_narrow_and_resized_panes_without_color_errors()
     instance.controls.clear.click(); assert(not instance.empty.hidden)
     ew.board.message = 'captured <name> & "quoted"'; ew.ui.updateTable()
     assert(instance.status.text:find("&lt;name&gt;", 1, true))
+end
+
+function tests.hidden_zero_sized_tab_reflows_when_revealed()
+    local e = environment({tabHost=true, zeroSizedTab=true}); e.advance(0.25)
+    local ew = e.F2T_EXCHANGE_WALKER; local target = e.Mux.panes.pane_2._tabs[4]
+    local instance = assert(ew.ui.instances[target])
+    eq(instance.background:get_width(), 1, "hidden zero-width tab builds safely")
+    target.content:resize(417, 828)
+    e.Mux._content.exchange_walker_live.onReveal(target)
+    e.advance(0)
+    eq(instance.background:get_width(), 417, "revealed tab fills available width")
+    eq(instance.background:get_height(), 828, "revealed tab fills available height")
+    assert(instance.empty.text:find("No exchange loaded", 1, true))
+    for _, message in ipairs(e.messages) do assert(not message:find("Mux content failed", 1, true), message) end
 end
 
 function tests.trailing_blanks_stop_at_message_or_timeout_and_manual_output_is_visible()

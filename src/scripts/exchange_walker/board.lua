@@ -106,8 +106,11 @@ for _, column in ipairs(columns) do
         local proposed = proposal(row, key)
         local changed = proposed ~= nil and proposed ~= number
         if changed then color = "#65dbff" end
+        -- This board supplies its colors in HTML/CSS. Explicitly bypass
+        -- Geyser.Label:echo's color parser so a bad inherited/multiple-return
+        -- color can never abort the entire Mux content apply.
         cell:echo(string.format("<div align='%s' style='white-space:nowrap;font-family:Consolas,monospace;font-size:%dpt;color:%s;'>%s</div>",
-            key == "name" and "left" or "right", font, color, escape(text)))
+            key == "name" and "left" or "right", font, color, escape(text)), "nocolor")
         cell:setToolTip(changed and string.format("%s: observed %s → proposed %s. Apply requires an explicit reviewed plan.", row.name, tostring(value), tostring(proposed)) or tostring(value))
         cell:setClickCallback(function() end) -- informational cells never trade
     end
@@ -116,7 +119,10 @@ EW.ui.boardColumns = columns
 local function label(parent, name, x, y, width, height, text, action)
     local widget = Geyser.Label:new({ name = name, x = x, y = y, width = width, height = height, fgColor = "#d8d8d8" }, parent)
     widget:setStyleSheet("background-color:#171b29;color:#ddd;border:1px solid #353c50;font-family:Consolas;font-size:9pt;")
-    widget:echo(text)
+    -- All board text is CSS-colored. `nocolor` avoids Mudlet 5.0.1's
+    -- Geyser.Color.parse path and becomes the safe inherited color for later
+    -- one-argument echoes from the shared table header renderer.
+    widget:echo(text, "nocolor")
     if action then widget:setClickCallback(action) end
     return widget
 end
@@ -155,6 +161,31 @@ function EW.ui.resizeTable(target)
         instance.headers[index]:move(x, 0); instance.headers[index]:resize(cell_width, 22); x = x + cell_width
     end
     f2tTableOnResize(instance.table_id, width)
+end
+function EW.ui.reflowTable(target, settle)
+    local instance = EW.ui.instances[target]
+    if not instance or not instance.table_id then return false end
+    local function reflow()
+        if F2T_EXCHANGE_WALKER ~= EW or EW.ui.instances[target] ~= instance then return end
+        EW.ui.resizeTable(target)
+        EW.ui.updateTable()
+    end
+    reflow()
+    if settle and type(tempTimer) == "function" then
+        for _, timer_id in ipairs(instance.reflow_timer_ids or {}) do
+            if type(killTimer) == "function" then pcall(killTimer, timer_id) end
+        end
+        instance.reflow_timer_ids = {}
+        -- Hidden Mux tabs can report 0x0 while content is first applied. The
+        -- tab switch updates Qt geometry asynchronously, so re-read it on the
+        -- next event-loop turn as well as immediately above.
+        local timer_id = tempTimer(0, function()
+            instance.reflow_timer_ids = {}
+            reflow()
+        end)
+        if timer_id then instance.reflow_timer_ids[1] = timer_id end
+    end
+    return true
 end
 local function update_status(instance, message)
     local state = (EW.enabled and "ON" or "OFF") .. " | " .. (EW.scheduler.enabled and "AUTO ON" or "AUTO OFF")
@@ -239,11 +270,15 @@ function EW.ui.buildTable(target)
     instance.console = { cecho = function(_, text)
         board.message = tostring(text):gsub("<[^>]+>", ""):gsub("\n", " "); update_status(instance, board.message)
     end, clear = function() end }
-    EW.ui.resizeTable(target); EW.ui.updateTable(); EW.refresh()
+    EW.ui.reflowTable(target, true); EW.refresh()
 end
 function EW.ui.destroyTable(target)
     local instance = EW.ui.instances[target]
     if not instance or not instance.table_id then return end
+    for _, timer_id in ipairs(instance.reflow_timer_ids or {}) do
+        if type(killTimer) == "function" then pcall(killTimer, timer_id) end
+    end
+    instance.reflow_timer_ids = {}
     f2tTableDestroy(instance.table_id)
     for _, header in ipairs(instance.headers) do header:hide(); if header.delete then header:delete() end end
     for _, key in ipairs({ "empty", "title", "header", "body", "scroll", "status", "input", "planet_label", "background" }) do

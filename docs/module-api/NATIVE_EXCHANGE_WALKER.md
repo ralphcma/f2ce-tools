@@ -7,7 +7,7 @@ the native `F2CE.API.v1` API and Walker. There is no separate Walker or
 API directly; older FedHauler versions still require the separate API.
 
 Baseline: F2CE 3.3.0 plus the existing map-content lifecycle repair, native API
-1.2.0 candidate.1, and Walker 3.4.0-native.3 ported from the public Walker 3.3.3
+1.2.0 candidate.1, and Walker 3.4.0-native.4 ported from the public Walker 3.3.3
 source at `e7276b81f962b3c7e4c72c6b34a161e1d3415ba6`.
 
 ## Settings and defaults
@@ -84,6 +84,15 @@ could then save to Muxlet but fail during repaint before updating the runtime
 target list. Escaping now returns only text, accepted settings update runtime
 before repaint, and display exceptions cannot interrupt lifecycle updates or
 settings invalidation. Previously saved native lists are loaded on upgrade.
+
+Candidate `native-ew8` hardens the actual Mudlet 5.0.1 path. Exchange Walker's
+CSS-colored board labels explicitly use Geyser's `nocolor` mode, so board
+construction and row rendering never enter the fragile `Geyser.Color.parse`
+path. A Walker tab first applied while hidden may report a `0x0` content area;
+the content now reflows immediately and once more on the next event-loop turn
+when restored or revealed. This prevents a permanently black tab after its
+container receives its real size. Target-setting application remains independent
+of board rendering and the footer reports the saved target count.
 
 **Refresh is read-only and works while OFF**. It does not make an applicable
 plan or authorize writes. Incomplete or wrong-planet responses retain the last

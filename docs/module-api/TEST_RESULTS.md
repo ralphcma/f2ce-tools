@@ -1,5 +1,26 @@
 # Module API verification
 
+## 2026-09-09 Exchange Walker Geyser and hidden-tab recovery
+
+Candidate: `f2ce-tools-3.3.0-native-ew8.mpackage`; Walker
+3.4.0-native.4. API 1.2.0-candidate.3 is unchanged.
+
+SHA-256: `dae6ec52906406e819eca5f6df212e0a53a0686dcc6c9cc7850bf9e956dbea9c`.
+
+The Exchange Walker board now explicitly renders CSS-colored labels in
+Geyser `nocolor` mode, bypassing Mudlet 5.0.1's color parser. Content applied
+to a hidden zero-sized Mux tab reflows when restored/revealed and again on the
+next event-loop turn. This fixes the black tab while preserving the existing
+Who/Events/Exchange host, Founder gate, bottom controls, and map/Galaxy content.
+
+The Walker suite passes 24 groups, including exact four-target Mux Settings
+persistence, render-failure isolation, `0x0` hidden-tab recovery, and explicit
+color-parser bypass. Source and exact-package runs pass all 75 native groups:
+API 23, adapter 5, Walker 24, startup 7, topology 8, map lifecycle 1 and Galaxy
+lifecycle 7. All 250 Lua checks, 32 metadata checks and 221 compiled-script/source
+matches pass. No profile, gameplay command, push, release, or API policy change
+is performed.
+
 ## 2026-09-09 topology capture and owned-response serialization
 
 Candidate: `f2ce-tools-3.3.0-native-ew7.mpackage`; pair with FedHauler 1.16.6.
