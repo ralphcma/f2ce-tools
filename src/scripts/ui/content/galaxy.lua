@@ -14,6 +14,12 @@ F2T_GALAXY = F2T_GALAXY or {
     expanded       = {},       -- [key]=true, session-only expand state
 }
 
+-- A reload replaces this capture owner. Retire only its timers/handlers,
+-- retaining the last complete index and leaving other captures untouched.
+if F2T_GALAXY._captureCleanup then F2T_GALAXY._captureCleanup() end
+local scrapeTimer = nil
+local captureHandlers = {}
+
 -- di systems capture
 
 -- Completion is silence-based (0.5s with no new output), not "first blank
@@ -25,10 +31,52 @@ local function setCaptureTriggers(on)
     pcall(fn, "galaxy_nav_end")
 end
 
+function f2t_galaxy_cancel_capture()
+    F2T_GALAXY.loading, F2T_GALAXY.capture_active = false, false
+    F2T_GALAXY.capture_lines = {}
+    setCaptureTriggers(false)
+    if type(f2t_capture_close) == "function" then f2t_capture_close("galaxy") end
+end
+
+local function cancelPendingCapture()
+    if scrapeTimer then killTimer(scrapeTimer); scrapeTimer = nil end
+    f2t_galaxy_cancel_capture()
+end
+F2T_GALAXY._captureCleanup = function()
+    cancelPendingCapture()
+    for _, id in ipairs(captureHandlers) do pcall(killAnonymousEventHandler, id) end
+end
+-- Also clears an orphan left by the pre-cleanup implementation on hot update.
+f2t_galaxy_cancel_capture()
+
+local function onCaptureEvent(name, callback)
+    captureHandlers[#captureHandlers + 1] = registerAnonymousEventHandler(name, callback)
+end
+
 local function resetFinishTimer()
-    f2t_capture_arm("galaxy", function()
+    local ok, err = pcall(f2t_capture_arm, "galaxy", function()
         if F2T_GALAXY.capture_active then f2t_galaxy_finish_capture() end
     end)
+    if not ok or (F2T_GALAXY.capture_active and not
+        (F2T_CAPTURE_WINDOWS and F2T_CAPTURE_WINDOWS.galaxy and F2T_CAPTURE_WINDOWS.galaxy.timerId)) then
+        f2t_galaxy_cancel_capture()
+        f2t_debug_log("[galaxy] capture timer unavailable: %s", tostring(err))
+        return false
+    end
+    return F2T_GALAXY.capture_active
+end
+
+local function nativeBusy()
+    local api = F2CE and F2CE.API and F2CE.API.v1
+    if api then
+        -- Native background UI work must respect the same reservations as
+        -- module commands; it must never jump ahead of an existing owner.
+        if api.navigation and api.navigation._lease then return true end
+        if api.commands and (api.commands._lease or
+            (api.commands._nativeBlocker and api.commands._nativeBlocker())) then return true end
+    end
+    return F2T_SPEEDWALK_OWNER ~= nil or F2T_SPEEDWALK_ACTIVE == true
+        or F2T_SPEEDWALK_WAITING_FOR_MOVE == true
 end
 
 -- Safe to call repeatedly; the loading guard prevents overlap.
@@ -49,14 +97,30 @@ function f2t_galaxy_scrape()
         f2t_debug_log("[galaxy] scrape skipped (offline)")
         return
     end
+    if nativeBusy() then
+        f2t_galaxy_schedule_scrape(0.5)
+        return false, "native_busy"
+    end
+    if type(f2t_capture_arm) ~= "function" or type(f2t_capture_close) ~= "function" then
+        f2t_debug_log("[galaxy] scrape skipped (capture service unavailable)")
+        return false, "capture_unavailable"
+    end
     f2t_capture_close("galaxy")
     F2T_GALAXY.loading        = true
     F2T_GALAXY.capture_active = true
     F2T_GALAXY.capture_lines  = {}
+    -- Establish cleanup before any command/UI call that can throw. A failed
+    -- startup must not leave the catch-all gag or API blocker active.
+    if not resetFinishTimer() then return false, "capture_timer_unavailable" end
     setCaptureTriggers(true)
-    f2t_galaxy_refresh_open()
-    sendAll("di systems", false)   -- don't echo; triggers delete the output
-    resetFinishTimer()
+    local ok, err = pcall(sendAll, "di systems", false)
+    if not ok then
+        f2t_galaxy_cancel_capture()
+        f2t_debug_log("[galaxy] scrape send failed: %s", tostring(err))
+        return false, "capture_send_failed"
+    end
+    pcall(f2t_galaxy_refresh_open)
+    return true
 end
 
 -- Buffers system lines and folds wrapped continuation lines into the previous one.
@@ -64,7 +128,7 @@ function f2t_galaxy_capture_line(line)
     if not F2T_GALAXY.capture_active then return end
     line = (line or ""):match("^%s*(.-)%s*$")
     if line == "" then return end
-    resetFinishTimer()
+    if not resetFinishTimer() then return end
     if line:match(" %- .+ cartel %- ") then
         table.insert(F2T_GALAXY.capture_lines, line)
     elseif #F2T_GALAXY.capture_lines > 0 then
@@ -118,6 +182,7 @@ end
 function f2t_galaxy_finish_capture()
     if not F2T_GALAXY.capture_active then return end
     F2T_GALAXY.capture_active = false
+    F2T_GALAXY.loading = false
     setCaptureTriggers(false)
     f2t_capture_close("galaxy")
 
@@ -152,7 +217,6 @@ function f2t_galaxy_finish_capture()
     f2t_galaxy_refresh_open()
 end
 
-local scrapeTimer = nil
 -- Bounds how long a scrape defers to a pending comhistory backfill (below)
 -- before giving up and running anyway, in case that flag ever gets stuck.
 local SCRAPE_DEFER_LIMIT = 10
@@ -1333,12 +1397,15 @@ table.insert(F2T_CONTENT_REGISTRARS, f2tRegisterGalaxy)
 
 -- Don't scrape on connect; di systems would fire mid-login.
 -- f2tCharacterChanged (below) schedules it once login is confirmed.
-registerAnonymousEventHandler("sysConnectionEvent", function()
+onCaptureEvent("sysConnectionEvent", function()
     if f2t_check_connection then f2t_check_connection() end
     f2t_galaxy_refresh_open()
 end)
 
-registerAnonymousEventHandler("f2tCharacterChanged", function()
+onCaptureEvent("sysDisconnectionEvent", cancelPendingCapture)
+
+onCaptureEvent("f2tCharacterChanged", function()
+    cancelPendingCapture()
     f2t_galaxy_schedule_scrape(3)
 end)
 
@@ -1347,13 +1414,13 @@ end)
 -- only refreshing on scrape/settings/search interactions. This also keeps
 -- coverage/POI state live as you explore, since populate() recomputes both
 -- fresh off the room DB every time - no separate cache to go stale.
-registerAnonymousEventHandler("gmcp.room.info", function()
+onCaptureEvent("gmcp.room.info", function()
     f2t_galaxy_refresh_open()
 end)
 
 -- Bulk map changes (delete/clear, import) don't necessarily move the player,
 -- so they can't rely on gmcp.room.info to trigger a repaint.
-registerAnonymousEventHandler("f2tMapDataChanged", function()
+onCaptureEvent("f2tMapDataChanged", function()
     f2t_galaxy_refresh_open()
 end)
 

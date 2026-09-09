@@ -25,7 +25,8 @@ try {
             @('tests/exchange_walker/run.lua', $SourceRoot),
             @('tests/map/startup_topology_sync_run.lua', "$SourceRoot/src/scripts/map/events.lua"),
             @('tests/map/topology_capture_safety_run.lua', "$SourceRoot/src/scripts/map/topology_capture.lua"),
-            @('tests/map/content_lifecycle_run.lua', "$SourceRoot/src/scripts/ui/content/map.lua")
+            @('tests/map/content_lifecycle_run.lua', "$SourceRoot/src/scripts/ui/content/map.lua"),
+            @('tests/map/galaxy_capture_lifecycle_run.lua', $SourceRoot)
         )
         foreach ($command in $commands) {
             & $LuaExe @command

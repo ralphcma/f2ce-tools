@@ -1,5 +1,33 @@
 # Module API verification
 
+## 2026-09-09 Galaxy capture lifecycle and consumer handoff
+
+Candidate: `f2ce-tools-3.3.0-native-ew6.mpackage`; pair with FedHauler 1.16.5.
+API 1.2.0-candidate.3 and Walker 3.4.0-native.3 are unchanged. This patch is to
+native Galaxy's capture lifecycle, not a relaxation of API contention guards.
+
+SHA-256: `6864ae8985a06f72bf11cae9504fa9a750aa05f304e551992f06fbd6f7022e23`.
+
+The live blocker is `galaxy_capture`; capture duration/staleness cannot be
+deduced from the transcript. Native Galaxy previously sent its background
+request without consulting existing reservations. It now defers to API/native
+owners, arms bounded cleanup before sending, and clears its own state/gag
+triggers on send/timer failure, disconnect, character change or reload. A
+reload preserves the last complete index and retires its owned handlers.
+No other capture is reset or navigation owner overridden.
+
+Seven real-script lifecycle groups cover silence completion, continuous-output
+maximum duration, missing/broken timers or transport, UI failure, reservation
+deferral, disconnect, and reload. Consumer integration reproduces the real
+Galaxy scrape overlapping a zero-owned text response: route 1 now waits at
+the same target, then acquires normally after capture ends. A permanently
+blocked capture stops after a bounded wait with review memory retained.
+
+Source and compiled package pass 69 groups, 250 Lua checks, 32 metadata checks,
+and 221 embedded-script/source matches. Paired FedHauler source/package checks
+pass 237 tests and 17 archive/source matches. Live acceptance remains pending;
+no install, gameplay, publication or Exchange Walker UI changes were performed.
+
 ## 2026-09-09 navigation completion handoff
 
 Candidate: `f2ce-tools-3.3.0-native-ew5.mpackage`, API 1.2.0-candidate.3.
