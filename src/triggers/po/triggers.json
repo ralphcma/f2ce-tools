@@ -65,5 +65,6 @@
       }
     ]
   },
-  { "name": "capture_blank", "patterns": [{ "pattern": "^\\s*$", "type": "regex" }] }
+  { "name": "capture_blank", "patterns": [{ "pattern": "^\\s*$", "type": "regex" }] },
+  { "name": "capture_tail_boundary", "patterns": [{ "pattern": "^.*\\S.*$", "type": "regex" }] }
 ]

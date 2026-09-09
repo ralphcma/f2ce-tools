@@ -1,5 +1,8 @@
 [
   {"name": "v1"},
   {"name": "exchange"},
+  {"name": "services"},
+  {"name": "protection"},
+  {"name": "navigation_verified"},
   {"name": "adapter"}
 ]

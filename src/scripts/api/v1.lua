@@ -11,8 +11,8 @@ if type(existing) == "table" and type(existing._reload) == "function" then
 end
 
 local API = {
-    _build = "1.1.0-candidate.1",
-    version = "1.1.0",
+    _build = "1.2.0-candidate.1",
+    version = "1.2.0",
     f2ce_version = "unknown",
     capabilities = {},
     schemas = {},
@@ -309,6 +309,7 @@ function API.modules.disable(id, reason)
     API.navigation._revokeModule(id, reason or "module_disabled")
     API.commands._revokeModule(id, reason or "module_disabled")
     API.prices._revokeModule(id, reason or "module_disabled")
+    if API.hauling._owner == id then API.hauling.terminate() end
     record.context:cleanup(reason or "disabled")
     record.generation = record.generation + 1
     record.context = new_context(id, record.generation)
@@ -367,6 +368,9 @@ local function nav_status()
 end
 
 function navigation.status() return nav_status() end
+function navigation.environment()
+    return readonly_copy(API._adapter and API._adapter.navState and API._adapter.navState() or {})
+end
 
 local function release_nav_lease(reason)
     local lease = navigation._lease
@@ -392,8 +396,8 @@ local function finish_navigation(state, reason, detail)
     navigation._request = nil
     API.events.emit(state == "completed" and "navigation.completed" or "navigation.failed", request.public)
     local callback = state == "completed" and request.on_complete or request.on_failure
-    safe_call("navigation result", callback, readonly_copy(request.public))
     release_nav_lease(reason or state)
+    safe_call("navigation result", callback, readonly_copy(request.public))
 end
 
 local function interrupt_navigation(lease, reason)
@@ -406,6 +410,12 @@ local function interrupt_navigation(lease, reason)
     if ok and type(response) == "table" and response.auto_resume then return { auto_resume = true } end
     finish_navigation("failed", reason or "interrupted")
     return response
+end
+
+local function foreign_navigation()
+    local lease = navigation._lease
+    local state = navigation.environment()
+    return state.owner ~= nil and (not lease or state.owner ~= lease.native_owner)
 end
 
 local Lease = {}
@@ -539,18 +549,21 @@ end
 function navigation.pause(handle)
     local request = navigation._request
     if not request or request.handle ~= handle then return nil, api_error("E_NAV_REQUEST", "request is not active") end
+    if foreign_navigation() then return nil, api_error("E_NAV_OWNERSHIP", "foreign navigation owner") end
     if not API._adapter.navPause or not API._adapter.navPause() then return nil, api_error("E_NAV_STATE", "request could not be paused") end
     request.public.state = "paused"; API.events.emit("navigation.paused", request.public); return true
 end
 function navigation.resume(handle)
     local request = navigation._request
     if not request or request.handle ~= handle then return nil, api_error("E_NAV_REQUEST", "request is not active") end
+    if foreign_navigation() then return nil, api_error("E_NAV_OWNERSHIP", "foreign navigation owner") end
     if not API._adapter.navResume or not API._adapter.navResume() then return nil, api_error("E_NAV_STATE", "request could not be resumed") end
     request.public.state = "running"; API.events.emit("navigation.resumed", request.public); return true
 end
 function navigation.cancel(handle, immediate, reason)
     local request = navigation._request
     if not request or request.handle ~= handle then return true end
+    if foreign_navigation() then finish_navigation("cancelled", "foreign navigation owner"); return true end
     reason = reason or (immediate and "cancelled_immediate" or "cancelled_graceful")
     if immediate then
         if API._adapter.navStop then safe_call("immediate navigation cancel", API._adapter.navStop) end
@@ -568,6 +581,7 @@ end
 function navigation._tick()
     local request = navigation._request
     if not request then return end
+    if foreign_navigation() then finish_navigation("failed", "foreign navigation owner"); return end
     if request.cancel_requested then
         if API._adapter and API._adapter.navStop then safe_call("graceful navigation cancel", API._adapter.navStop) end
         finish_navigation("cancelled", request.cancel_requested)
@@ -592,7 +606,7 @@ end
 
 function navigation._revokeModule(module_id, reason)
     if navigation._lease and navigation._lease.module_id == module_id then
-        if navigation._request and API._adapter and API._adapter.navStop then safe_call("navigation revoke", API._adapter.navStop) end
+        if navigation._request and not foreign_navigation() and API._adapter and API._adapter.navStop then safe_call("navigation revoke", API._adapter.navStop) end
         if navigation._request then finish_navigation("cancelled", reason or "module_disabled") else release_nav_lease(reason or "module_disabled") end
     end
 end
@@ -601,9 +615,9 @@ API.commands = { _lease = nil, _audit = {}, _limit = 500 }
 local commands = API.commands
 local CommandLease = {}; CommandLease.__index = CommandLease
 
-function commands._nativeBlocker()
+function commands._nativeBlocker(owned_hauling_price)
     if not API._adapter or not API._adapter.nativeCommandBlocker then return nil end
-    local ok, blocker = pcall(API._adapter.nativeCommandBlocker)
+    local ok, blocker = pcall(API._adapter.nativeCommandBlocker, owned_hauling_price == true)
     if ok then return blocker end
     return { kind = "adapter_error", detail = tostring(blocker) }
 end
@@ -629,7 +643,7 @@ function CommandLease:send(command, metadata)
         entry.status = "denied"; entry.reason = "missing_command_or_reason"; commands._record(entry)
         return nil, api_error("E_COMMAND_METADATA", "command and metadata.reason are required")
     end
-    local blocker = commands._nativeBlocker()
+    local blocker = commands._nativeBlocker(self._hauling_price == true)
     if blocker then
         entry.status = "denied"
         entry.reason = "native_automation_active"
@@ -693,7 +707,11 @@ function commands._revokeModule(module_id, reason)
     if commands._lease and commands._lease.module_id == module_id then commands._lease:release(reason or "module_disabled") end
 end
 
-API.data = { _cache = {} }
+API.data = { _cache = {}, _receipts = {}, _sequence = 0 }
+API.character = {}
+function API.character.hasRank(rank)
+    return API._adapter and API._adapter.rankAtLeast and API._adapter.rankAtLeast(rank) == true or false
+end
 local data = API.data
 local DATA_CHANNELS = {
     room = { path = {"room", "info"}, event = "data.room" },
@@ -710,12 +728,32 @@ function data.get(channel)
     if not DATA_CHANNELS[channel] then return nil, api_error("E_DATA_CHANNEL", "unknown data channel", { channel = channel }) end
     return readonly_copy(data._cache[channel])
 end
-function data.refresh(channel)
+function data.mapRoomId(room)
+    return API._adapter and API._adapter.mapRoomIdentity and API._adapter.mapRoomIdentity(room) or nil
+end
+function data.receipt(channel)
+    local result = readonly_copy(data._receipts[channel])
+    if result and not result.room_id then result.room_id = data.mapRoomId(result.room) end
+    return result
+end
+function data.refresh(channel, received)
     local definition = DATA_CHANNELS[channel]
     if not definition then return nil, api_error("E_DATA_CHANNEL", "unknown data channel", { channel = channel }) end
     local snapshot = API._adapter and API._adapter.gmcpSnapshot and API._adapter.gmcpSnapshot(definition.path) or nil
     data._cache[channel] = readonly_copy(snapshot)
     local payload = { channel = channel, available = snapshot ~= nil, value = readonly_copy(snapshot), timestamp = os.time() }
+    -- Cache reads/refreshes are not proof of a new server response. Freeze
+    -- room identity only on a real GMCP event, before any consumer callback.
+    if received == true then
+        local room = API._adapter.gmcpSnapshot(DATA_CHANNELS.room.path)
+        data._sequence = data._sequence + 1
+        local previous = data._receipts[channel]
+        data._receipts[channel] = { generation = previous and previous.generation + 1 or 1,
+            sequence = data._sequence, received_at = payload.timestamp, data = readonly_copy(snapshot),
+            room = readonly_copy(room), room_id = data.mapRoomId(room) }
+        payload.receipt = data.receipt(channel)
+    end
+    payload.received = received == true
     API.events.emit(definition.event, payload)
     return readonly_copy(snapshot)
 end
@@ -727,7 +765,7 @@ local function sorted_providers(request)
     local result = {}
     for _, provider in pairs(prices._providers) do
         local scope_ok = not provider.scopes or provider.scopes[request.options.scope or "default"] or provider.scopes["*"]
-        if provider.active and scope_ok then result[#result + 1] = provider end
+        if provider.active and scope_ok and (not request.options.provider or request.options.provider == provider.id) then result[#result + 1] = provider end
     end
     table.sort(result, function(a, b) if a.priority == b.priority then return a.id < b.id end; return a.priority > b.priority end)
     result[#result + 1] = { id = "f2ce.builtin", priority = -math.huge, builtin = true, active = true }
@@ -737,7 +775,10 @@ local function price_finish(request, result, err)
     if request.finished then return end
     request.finished = true; request.public.state = err and "failed" or "completed"; request.public.result = readonly_copy(result); request.public.error = err and tostring(err) or nil
     if request.timer then request.timer:cancel() end
-    if request.command_lease then request.command_lease:release("price_request_complete") end
+    if request.command_lease then
+        request.command_lease._hauling_price = nil
+        if not request.borrowed then request.command_lease:release("price_request_complete") end
+    end
     prices._active = nil
     API.events.emit(err and "provider.failed" or "provider.completed", request.public)
     safe_call("price request completion", request.callback, readonly_copy(result), err)
@@ -745,6 +786,9 @@ local function price_finish(request, result, err)
 end
 local function try_provider(request)
     request.index = request.index + 1
+    if request.index > 1 and request.options.fallback == false then
+        return price_finish(request, nil, api_error("E_PROVIDER", "selected price provider failed; fallback disabled"))
+    end
     request.attempt_generation = (request.attempt_generation or 0) + 1
     local attempt_generation = request.attempt_generation
     local provider = request.providers[request.index]
@@ -768,7 +812,7 @@ local function try_provider(request)
     end
     if provider.builtin then
         if not API._adapter or not API._adapter.priceCheck then return done(nil, "built-in provider unavailable") end
-        local blocker = commands._nativeBlocker()
+        local blocker = commands._nativeBlocker(request.borrowed)
         if blocker then
             return done(nil, api_error(
                 "E_COMMAND_CONTENTION",
@@ -805,7 +849,15 @@ function prices._pump()
     local request = table.remove(prices._queue, 1); prices._active = request
     local record = API._modules[request.module_id]
     if not record or record.state ~= "enabled" then return price_finish(request, nil, api_error("E_MODULE_DISABLED", "requesting module is disabled")) end
-    local lease, err = commands.acquire(record.context, { service = "prices", request_id = request.public.request_id })
+    local lease, err
+    if request.options._nativeHauling == true and API.hauling._owner == request.module_id then
+        lease = API.hauling._command_lease
+        if not lease or not lease:_valid() then return price_finish(request, nil, api_error("E_COMMAND_LEASE", "hauling price lease is unavailable")) end
+        request.borrowed = true
+        lease._hauling_price = true
+    else
+        lease, err = commands.acquire(record.context, { service = "prices", request_id = request.public.request_id })
+    end
     if not lease then return price_finish(request, nil, err) end
     request.command_lease = lease; request.providers = sorted_providers(request); request.index = 0; try_provider(request)
 end
@@ -956,7 +1008,7 @@ function API._install(adapter)
         API._adapter_tokens = API._adapter_tokens or {}
         for event_name, channels in pairs(bindings) do
             local id = adapter.registerEvent(event_name, function()
-                for _, channel in ipairs(channels) do if type(channel) == "string" then data.refresh(channel) else channel() end end
+                for _, channel in ipairs(channels) do if type(channel) == "string" then data.refresh(channel, true) else channel() end end
             end)
             API._adapter_tokens[#API._adapter_tokens + 1] = { id = id, cancel = adapter.unregisterEvent }
         end
@@ -966,6 +1018,7 @@ function API._install(adapter)
         API._adapter_tokens[#API._adapter_tokens + 1] = { id = disconnect_id, cancel = adapter.unregisterEvent }
     end
     for channel in pairs(DATA_CHANNELS) do data.refresh(channel) end
+    if API.services then API.services.install() end
     API.events.emit("api.ready", API.info())
     return API
 end
@@ -1001,7 +1054,7 @@ function API._reconnectReset(reason)
         safe_call("price reconnect cancellation", request.callback, nil, api_error("E_RECONNECT", "request cancelled by reconnect"))
     end
     hauling._release("reconnect_reset")
-    data._cache = {}
+    data._cache, data._receipts, data._sequence = {}, {}, 0
     API.events.emit("reconnect.reset", { reason = reason or "reconnect", timestamp = os.time() })
 end
 

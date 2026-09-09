@@ -5,6 +5,9 @@
 -- @param commodity: Commodity name (supports short names like "petros")
 -- @param callback: Optional callback for programmatic mode
 function f2t_price_check_commodity(commodity, callback)
+    local api = F2CE and F2CE.API and F2CE.API.v1
+    if api and api.prices and api.prices.offerNative
+        and api.prices.offerNative(commodity, callback) then return end
     -- Check prerequisites before sending game command
     if not f2t_check_rank_requirement("Merchant", "Price checking") then
         if callback then

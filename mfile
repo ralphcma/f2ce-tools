@@ -1,6 +1,6 @@
 {
   "package": "f2ce-tools",
-  "version": "3.3.0-native-ew1",
+  "version": "3.3.0-native-ew2",
   "dependency": {
     "package": "Muxlet",
     "version": "v2.3.2",

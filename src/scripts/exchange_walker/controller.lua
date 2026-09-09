@@ -16,7 +16,7 @@ if type(previous) == "table" and type(previous.shutdown) == "function" then prev
 local EW = { NATIVE = true }
 F2T_EXCHANGE_WALKER = EW
 
-EW.VERSION = "3.4.0-native.1"
+EW.VERSION = "3.4.0-native.2"
 EW.API_CONTRACT = "ExchangeWalkerLive/1.0"
 EW.MIN_F2CE_VERSION = "3.3.0"
 EW.enabled = false
@@ -263,6 +263,7 @@ local function state_payload()
 end
 
 local function update_ui()
+  if EW.ui.updateTable then EW.ui.updateTable() end
   local state = EW.enabled and "ON" or "OFF"
   local activity = EW.applying and "APPLYING" or (EW.busy and "CAPTURING" or "IDLE")
   local plan_text = EW.plan and string.format("%d changes", #EW.plan.actions) or "no plan"
@@ -323,6 +324,7 @@ local function dynamic_call(method)
 end
 
 local function build_mux_content(target)
+  if EW.ui.buildTable then return EW.ui.buildTable(target) end
   if target.contentBg and type(target.contentBg.hide) == "function" then
     pcall(target.contentBg.hide, target.contentBg)
   end
@@ -368,6 +370,7 @@ local function build_mux_content(target)
 end
 
 local function destroy_mux_content(target)
+  if EW.ui.destroyTable then EW.ui.destroyTable(target) end
   local instance = EW.ui.instances[target]
   if not instance then return end
   if instance.controls then for _, widget in pairs(instance.controls) do destroy_widget(widget) end end
@@ -386,7 +389,7 @@ function EW.ui.registerMuxContent()
   local definition = {
     name = "Exchange Walker",
     description = "Planet-owner production, stockpile, spread, preview, and apply display.",
-    group = "F2CE-Tools", internal = false, singleton = false,
+    group = "F2CE-Tools", internal = EW.rankAllowed and not EW.rankAllowed() or false, singleton = false,
     apply = function(target)
       local ok, reason = pcall(build_mux_content, target)
       if not ok then
@@ -395,7 +398,7 @@ function EW.ui.registerMuxContent()
       end
     end,
     remove = function(target) destroy_mux_content(target) end,
-    resize = function(_target) update_ui() end,
+    resize = function(target) if EW.ui.resizeTable then EW.ui.resizeTable(target) end; update_ui() end,
     serialize = function(_target) return {} end,
     restore = function(_target, _data) update_ui() end,
     onReveal = function(_target) update_ui() end,
@@ -698,6 +701,7 @@ function EW.on()
 end
 
 function EW.cancel(reason)
+  if EW.cancelView then EW.cancelView(reason) end
   local was_active = EW.busy or EW.applying
   cancel_timer("scheduler_timer")
   EW.scheduler.enabled, EW.scheduler.running = false, false
@@ -790,6 +794,7 @@ function EW.preview(target_planet, automatic)
           return preview_failed(tostring(capture_error) .. " No plan was created; nothing can be applied.")
         end
         EW.plan = plan
+        if EW.ui.setBoard then EW.ui.setBoard(plan.planet, exchange_data) end
         update_ui()
         display_plan(plan)
         emit("plan.ready", plan)

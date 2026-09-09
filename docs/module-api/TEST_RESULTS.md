@@ -1,5 +1,37 @@
 # Module API verification
 
+## 2026-09-09 native consumer services / exchange board candidate
+
+Candidate: `f2ce-tools-3.3.0-native-ew2.mpackage`, API 1.2.0-candidate.1,
+Walker 3.4.0-native.2, pinned Muxlet v2.3.2.
+
+SHA-256: `a64526c784fcb9c4e45253f52c34882300a113e66e7b83db6c5e85ee15cfbb13`.
+
+- 249 Lua syntax checks and 32 JSON/manifest checks passed.
+- API 20, native adapter 4, Walker 20, map startup 6, topology capture 4,
+  and map content lifecycle 1 groups passed (55 total).
+- 221 scripts reconstructed from compiled package XML matched source. All
+  six suites passed again against those actual packaged scripts.
+- FedHauler 1.16.0 companion: 182 legacy regressions and 17 actual native
+  API/consumer integration tests passed against source and both built packages.
+- New native coverage: load order, OFF authority, disconnect, genuine GMCP
+  receipt generations and server-local/map room identity, broker release before
+  arrival callback, top-20 premium provider hook, PO discovery/bulk ownership,
+  low-stamina synchronous startup, in-flight movement settlement/timeout,
+  foreign navigation isolation, bounded verified navigation, cancellation, and
+  an already-here arrival synchronously starting the next route.
+- New board coverage: Founder promotion/demotion/unknown rank; tab insertion
+  without changing other tabs/maps; bottom controls; header/body pixel alignment
+  after resize; signed Net colors and sorting; OFF read-only refresh; incomplete
+  capture retention; cancellation; and bounded capture-only blank suppression.
+
+No live account, installation, game command or GUI mutation was used. Geyser and
+Mux behavior is exercised with mocks plus the real native table implementation;
+actual Qt/Mudlet appearance and interactive lifecycle remain acceptance checks.
+This candidate is not an upstream release. Native manual premium scans while a
+haul is paused remain broker-blocked; use its registered premium provider flow
+or stop hauling before a manual scan.
+
 ## 2026-09-09 native Exchange Walker / API 1.1 candidate
 
 API development handoff was completed from the Build F2CE Module API task.

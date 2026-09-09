@@ -8,6 +8,39 @@ local function place(content_id, first, last)
     if not (ew and Mux and Mux.getPane and Mux._applyContent) then
         return false, "Mux safe placement capability is unavailable"
     end
+    local eligible = ew.rankAllowed and ew.rankAllowed()
+    local host, existing_tab
+    for index = 1, 99 do
+        local pane = Mux.getPane("pane_" .. index)
+        if pane then
+            local who, exchange = false, false
+            for _, tabs in ipairs({ pane._tabs or {}, pane._hiddenTabs or {} }) do
+                for _, tab in ipairs(tabs) do
+                    who = who or tab._activeContent == "fed2_who"
+                    exchange = exchange or tab._activeContent == "fed2_exchange"
+                    if tab._activeContent == content_id then
+                        existing_tab = existing_tab or tab
+                        if Mux.runAction then Mux.runAction(eligible and "mux.showSelf" or "mux.hideSelf", { tab = tab, pane = pane }) end
+                    end
+                end
+            end
+            if who and exchange then host = host or pane end
+            if not eligible and pane._activeContent == content_id and Mux.runAction then
+                Mux.runAction("mux.hideSelf", { pane = pane })
+            end
+        end
+    end
+    if not eligible then return false, "Founder rank or higher is required" end
+    if existing_tab then return true, existing_tab.pane and existing_tab.pane.id, "existing-tab" end
+    if host and type(host.addTab) == "function" then
+        local tab = host:addTab("Exchange Walker")
+        if not tab then return false, "Muxlet could not create the Exchange Walker tab" end
+        tab.rules = tab.rules or {}
+        tab.rules[#tab.rules + 1] = { id = "ew_founder", enabled = true,
+            cond = { ref = "ExchangeWalkerFounder" }, act = "mux.showSelf", actElse = "mux.hideSelf" }
+        Mux._applyContent(tab, content_id, true)
+        return tab._activeContent == content_id, host.id, "added-tab"
+    end
     -- Existing placement wins, even outside the preferred range. Do not switch
     -- tabs, move windows, or replace the map/Galaxy/another package's content.
     for index = 1, 99 do
@@ -40,6 +73,11 @@ end
 function f2tRegisterExchangeWalker()
     local ew = walker()
     if not ew then return end
+    if Mux and Mux.createDeclarativeCondition then
+        Mux.createDeclarativeCondition({ id = "ExchangeWalkerFounder", label = "Founder or higher",
+            cond = { type = "gmcp_contains", path = "gmcp.char.vitals.rank",
+                values = "Founder,Engineer,Mogul,Technocrat,Gengineer,Magnate,Plutocrat,Syndicrat" } }, true)
+    end
     ew.ui.placeRegisteredContent = place
     if not ew.bootstrap() then return end
     local ok, why = ew.ui.registerMuxContent()
@@ -48,6 +86,21 @@ function f2tRegisterExchangeWalker()
 end
 
 if walker() then walker().ui.placeRegisteredContent = place end
+
+if walker() and type(registerAnonymousEventHandler) == "function" then
+    local ew = walker()
+    ew.runtime.handler_ids[#ew.runtime.handler_ids + 1] = registerAnonymousEventHandler("gmcp.char.vitals", function()
+        if F2T_EXCHANGE_WALKER ~= ew then return end
+        if not ew.rankAllowed() then
+            if ew.enabled or ew.busy or ew.applying or ew.scheduler.enabled then ew.off() end
+            local current = F2CE and F2CE.API and F2CE.API.v1
+            if current then current.modules.disable("f2ce.exchange_walker_view", "rank_gate") end
+        end
+        if ew.ui.definition then ew.ui.definition.internal = not ew.rankAllowed() end
+        place(ew.ui.content_id, ew.ui.preferred_pane_start, ew.ui.preferred_pane_end)
+        if ew.ui.updateTable then ew.ui.updateTable() end
+    end)
+end
 
 F2T_CONTENT_REGISTRARS = F2T_CONTENT_REGISTRARS or {}
 -- Preserve list order but replace our stale closure after a script-only reload.

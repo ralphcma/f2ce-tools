@@ -91,6 +91,7 @@ function bridge.register()
 end
 
 function bridge.enable()
+    if not api() or not api().character.hasRank("Founder") then return nil, "Founder rank or higher is required" end
     local ready, reason = bridge.register()
     if not ready then return nil, reason end
     context, reason = api().modules.enable(module_id)
@@ -104,6 +105,7 @@ function bridge.disable(reason)
 end
 
 local function acquire(reason)
+    if not api() or not api().character.hasRank("Founder") then return nil, "Founder rank or higher is required" end
     if not EW.enabled or EW.isBlocked() then return nil, "Native Exchange Walker is OFF or a standalone instance is present" end
     if session and session:status().active then return session end
     local current = api()

@@ -4,7 +4,7 @@ All data returned across the API boundary is copied. Errors are tables with `cod
 
 ## Metadata and dependency validation
 
-- `API.version`: semantic API version (`1.1.0`; candidate build).
+- `API.version`: semantic API version (`1.2.0`; candidate build).
 - `API.f2ce_version`: installed F2CE package version.
 - `API.info()`: copied API/F2CE/adapter/capability/integration record.
 - `API.hasCapability(name)`, `API.getCapabilities()`, `API.requireCapabilities(names)`.
@@ -16,6 +16,53 @@ Capabilities include `modules`, `events`, `navigation`, `navigation.status.v33`,
 `API.integration` identifies this API's scope as F2CE gameplay services and identifies Muxlet as the UI/content provider. Visual integrations should call `Mux.registerContent` directly; this API does not wrap Muxlet.
 
 ## Modules and scoped context
+
+### Native consumer services added in 1.2
+
+- `data.receipt(channel)` returns a copied generation, global sequence, receipt
+  time, data, frozen room and mapped `room_id`. Only genuine GMCP events advance
+  this journal. `data.refresh(channel)` updates cache without creating freshness.
+  Normalized data events include `received` and an optional `receipt`.
+- `data.mapRoomId(room)` resolves the server's `system.area.num` hash. Server
+  local numbers are not mapper IDs; unresolved hashes return nil.
+- `navigation.environment()` is copied native state. `navigation.verify(ctx,
+  destination, options)` provides bounded semantic re-resolution/retries and
+  authoritative arrival checks. Options include `on_arrival`, `on_failure`,
+  `on_retry`, `require_exchange`, timeout (15–600 seconds), max_attempts (1–4),
+  max_room_visits (2–5). The returned session has `status()`/`cancel(reason)`;
+  deliberate cancellation does not call the failure callback. No map edits or
+  guessed exits are performed, and foreign navigation is never stopped.
+- `actions.command(ctx, operation, payload)` validates authorization and builds
+  futures.refresh/buy/liquidate or prices.premium/local commands. `actions.send`
+  also acquires/releases the broker. These require the module's explicit
+  `authorize(operation,payload)` callback. A send receipt is not game acceptance.
+- `discovery.system(ctx,name,callback)` returns a cancellable leased operation.
+  Callback receives planets, excluded, missing, failure. `trading.bulk(ctx,
+  {side,commodity,lots},callback)` accepts buy/sell and 1–100 lots; callback carries
+  the native confirmed count/status. Neither assumes transport means success.
+- `settings.get(component,key)` and `character.hasRank(rank)` are read-only.
+- `prices.analyze(commodity,lines,count)` returns parsed/analysis copies with a
+  validated 1–20 result count; `prices.display` invokes native presentation.
+  The stock checker has an explicit native provider hook for API-owned hauling;
+  only that owner's provider may borrow its hauling broker lease. It does not
+  replace the global checker. Foreign activity and captures remain blockers.
+- `protection.attach(ctx,{pause,resume,isActive,onHandoffFailure})` registers an
+  owner-scoped stamina client with `isOwned`, `status`, `ensure`, and `detach`.
+  Call `ensure()` after saving the returned handle: it can synchronously invoke
+  pause at low stamina. Pause must release unsent navigation. Already-sent steps
+  require fresh matching room receipts within 10 seconds before food travel.
+  Incomplete command operations, unknown movement, foreign owners, death and
+  timeout fail closed. `deathState`, `isRecovering`, `staminaState` and `status`
+  expose copied protection data; events include death.started/completed and
+  stamina.handoff_ready/failed. No literal `yes` or alternate navigator is used.
+
+Capabilities added: `gmcp.receipts`, `commands.typed`, `po.discovery`,
+`trading.bulk`, `prices.analysis`, `prices.hauling_provider`, `settings.read`,
+`protection.stamina`, `protection.death`. Read `api.ready` through the API or
+Mudlet's `f2ceApiReady` notification when the package finishes installing its
+adapter. Readiness grants no gameplay authority.
+
+### Registry
 
 - `API.modules.register(spec)` where `spec.id` is a lowercase dotted ID and `spec` may define `version`, `requires`, `initialize(context)`, `enable(context)`, `disable(context,reason)`, and `unload(context,reason)`.
 - `initialize(id)`, `enable(id)`, `disable(id,reason)`, `unload(id,reason)`, `unregister(id,reason)`, `reload(spec)`, and `status(id)`.

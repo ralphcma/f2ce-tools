@@ -1,6 +1,6 @@
 # F2CE module API v1 architecture
 
-Status: upstream-adoption candidate on `feature/module-api-v1`. The API version is `1.0.0`; the implementation build is `1.0.0-candidate.3`, based on F2CE-Tools 3.3.0.
+Status: upstream-adoption candidate on `codex/native-exchange-walker` in the user's fork. The API version is `1.2.0`; the implementation build is `1.2.0-candidate.1`, based on F2CE-Tools 3.3.0. It is not an upstream-approved release.
 
 The public boundary is one namespace, `F2CE.API.v1`. Existing `f2t_*` functions and `F2T_*` state remain unchanged for backwards compatibility, but new modules should never read, replace, or retain them. `src/scripts/api/adapter.lua` is the only compatibility boundary that reads those implementation globals.
 

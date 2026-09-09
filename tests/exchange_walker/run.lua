@@ -11,8 +11,8 @@ local function environment(options)
     setmetatable(e, { __index = _G }); e._G = e
     e.F2CE, e.F2T_VERSION = false, "3.3.0"
     e.gmcp = { room = { info = { id = 7, mapId = 3, area = "Tempest", owner = "TestOwner" } },
-        char = { vitals = { name = "TestOwner", stamina = 100 } } }
-    e.os = { time = function() return math.floor(e.now) end }
+        char = { vitals = { name = "TestOwner", stamina = 100, rank = options.rank or "Founder" } } }
+    e.os = { time = function() return math.floor(e.now) end, clock = os.clock, date = os.date }
     e.io = { open = function(path, mode)
         assert(mode == "r", "unexpected profile write: " .. path)
         local source = e.files[path]
@@ -59,13 +59,22 @@ local function environment(options)
     function e.load(path)
         local fn = assert(loadfile(root .. "/" .. path)); setfenv(fn, e); return fn()
     end
+    e.widgets = {}
     local function widget(spec, parent)
         local w = { name = spec.name, spec = spec, parent = parent, history = {} }
+        if spec.name then e.widgets[spec.name] = w end
         function w:echo(text) self.text = text end
         function w:cecho(text) self.history[#self.history + 1] = text end
         function w:setStyleSheet() end
         function w:setClickCallback(fn) self.click = fn end
-        function w:setToolTip() end
+        function w:setToolTip(text) self.tooltip = text end
+        function w:get_width() return tonumber(self.spec.width) or 800 end
+        function w:get_height() return tonumber(self.spec.height) or 500 end
+        function w:move(x, y) self.spec.x, self.spec.y = x, y end
+        function w:resize(width, height) self.spec.width, self.spec.height = width, height end
+        function w:print(text) self.text = text end
+        function w:getText() return self.text end
+        function w:setAction(fn) self.action = fn end
         function w:setColor() end
         function w:enableAutoWrap() end
         function w:show() self.hidden = false end
@@ -75,7 +84,10 @@ local function environment(options)
         return w
     end
     e.Geyser = { Label = { new = function(_, spec, parent) return widget(spec, parent) end },
-        MiniConsole = { new = function(_, spec, parent) return widget(spec, parent) end } }
+        MiniConsole = { new = function(_, spec, parent) return widget(spec, parent) end },
+        ScrollBox = { new = function(_, spec, parent) return widget(spec, parent) end },
+        CommandLine = { new = function(_, spec, parent) return widget(spec, parent) end } }
+    function e.f2t_ui_pt(value) return value .. "pt" end
     function e.makeMux()
         local mux = { _ready = true, _content = {}, panes = {}, registrations = 0, applied = {},
             _settings_ui = { visible = false }, settings = { _data = options.data or {}, _registry = {}, _change = {} } }
@@ -107,6 +119,11 @@ local function environment(options)
         function settings.showTab(ns) settings.shown = ns end
         function mux.registerContent(key, def) mux.registrations = mux.registrations + 1; mux._content[key] = def end
         function mux.getPane(key) return mux.panes[key] end
+        function mux.createDeclarativeCondition(rule) mux.condition = rule end
+        function mux.runAction(action, ctx)
+            local target = ctx.tab or ctx.pane
+            target.hidden = action == "mux.hideSelf"
+        end
         function mux._applyContent(target, key)
             mux.applied[#mux.applied + 1] = target.id
             local old = mux._content[target._activeContent]
@@ -114,7 +131,18 @@ local function environment(options)
             mux._content[key].apply(target); target._activeContent = key
         end
         for _, index in ipairs({1, 7, 15, 16}) do
-            mux.panes["pane_" .. index] = { id = "pane_" .. index, content = {}, contentBg = widget({}) }
+            mux.panes["pane_" .. index] = { id = "pane_" .. index, content = widget({}), contentBg = widget({}) }
+        end
+        if options.tabHost then
+            local pane = { id = "pane_2", _tabs = {}, _hiddenTabs = {}, active = "who" }
+            function pane:addTab(name)
+                local tab = { id = name, pane = self, content = widget({}), contentBg = widget({}) }
+                self._tabs[#self._tabs + 1] = tab; return tab
+            end
+            for _, name in ipairs({ "who", "events", "exchange" }) do
+                pane:addTab(name)._activeContent = "fed2_" .. name
+            end
+            mux.panes.pane_2 = pane
         end
         mux.panes.pane_1._activeContent = "nativeMap"
         mux.panes.pane_7._activeContent = "fed2_galaxy"
@@ -123,11 +151,13 @@ local function environment(options)
     end
     if not options.lateMux then e.makeMux() else e.Mux = false end
     e.load("src/scripts/settings.lua")
+    e.load("src/scripts/rank.lua")
+    e.load("src/scripts/ui/table_system.lua")
     e.load("src/scripts/api/v1.lua")
     e.load("src/scripts/api/exchange.lua")
     e.load("src/scripts/api/adapter.lua")
     function e.loadWalker()
-        for _, name in ipairs({"controller", "settings", "bridge", "bootstrap"}) do
+        for _, name in ipairs({"controller", "settings", "bridge", "board", "bootstrap"}) do
             e.load("src/scripts/exchange_walker/" .. name .. ".lua")
         end
         e.load("src/scripts/ui/content/exchange_walker.lua")
@@ -397,6 +427,71 @@ function tests.api_timeout_callback_errors_and_resource_pruning()
     assert(session:capture("exchange", "Tempest", function() error("consumer error") end))
     e.finishCapture("exchange", "Tempest", {}, "0 commodities, summary")
     eq(api.commands._lease, nil); eq(#ctx._resources, 0)
+end
+
+function tests.board_tab_joins_existing_tabs_and_is_rank_gated()
+    local e = environment({ tabHost = true, rank = "Financier" }); e.advance(0.25)
+    local ew, pane = e.F2T_EXCHANGE_WALKER, e.Mux.panes.pane_2
+    eq(#pane._tabs, 3); assert(not ew.on()); assert(not ew.inspect("Tempest")); eq(#e.sent, 0)
+    assert(e.Mux._content.exchange_walker_live.internal)
+    e.gmcp.char.vitals.rank = "Founder"; e.event("gmcp.char.vitals")
+    eq(#pane._tabs, 4); eq(pane.active, "who")
+    eq(pane._tabs[4]._activeContent, "exchange_walker_live")
+    eq(e.Mux.panes.pane_1._activeContent, "nativeMap"); eq(e.Mux.panes.pane_7._activeContent, "fed2_galaxy")
+    e.event("gmcp.char.vitals"); eq(#pane._tabs, 4)
+    assert(ew.inspect("Tempest")); eq(e.f2t_po.phase, "capturing_exchange")
+    e.gmcp.char.vitals.rank = nil; e.event("gmcp.char.vitals")
+    assert(pane._tabs[4].hidden); eq(e.f2t_po.phase, "idle"); eq(e.F2CE.API.v1.commands._lease, nil)
+    e.gmcp.char.vitals.rank = "Magnate"; e.event("gmcp.char.vitals")
+    assert(not pane._tabs[4].hidden); eq(#pane._tabs, 4)
+end
+
+function tests.board_refresh_is_read_only_validated_and_cancelable()
+    local e = environment({tabHost=true}); e.advance(0.25); local ew = e.F2T_EXCHANGE_WALKER
+    local pane = e.Mux.panes.pane_2; local instance = ew.ui.instances[pane._tabs[4]]
+    for _, control in pairs(instance.controls) do assert(tostring(control.spec.y):find("100%-", 1, true)) end
+    eq(#instance.headers, 7); eq(#ew.ui.boardColumns, 7)
+    assert(ew.inspect("Tempest")); eq(ew.enabled, false); eq(e.sent[1], "display exchange Tempest")
+    e.finishCapture("exchange", "Tempest", {
+        "AntiMatter: value 100ig/ton Spread: 40% Stock: current 20000/min 10000/max 20000 Efficiency: 275% Net: 24",
+        "Alloys: value 100ig/ton Spread: 6% Stock: current -525/min 0/max 0 Efficiency: 100% Net: -3",
+    }, "2 commodities, summary")
+    eq(#ew.board.rows, 2); eq(ew.plan, nil); eq(ew.enabled, false); eq(e.F2CE.API.v1.commands._lease, nil)
+    eq(ew.board.rows[1].stock_current, 20000); eq(ew.board.rows[1].net, 24)
+    local cell = e.widgets["f2tsb_" .. instance.table_id .. "_r1_c7"]
+    assert(cell.text:find("#ff7373", 1, true)); assert(cell.text:find("-3", 1, true))
+    instance.headers[7].click(); instance.headers[7].click()
+    assert(cell.text:find("+24", 1, true)); assert(cell.text:find("#65dd75", 1, true))
+    pane._tabs[4].content:resize(643, 450); ew.ui.resizeTable(pane._tabs[4])
+    for index, header in ipairs(instance.headers) do
+        local body = e.widgets["f2tsb_" .. instance.table_id .. "_r1_c" .. index]
+        eq(header.spec.width, body.spec.width); eq(header.spec.x, body.spec.x)
+    end
+    assert(ew.inspect("Denmark"))
+    e.finishCapture("exchange", "Denmark", {}, "67 commodities, summary")
+    eq(ew.board.planet, "Tempest"); eq(#ew.board.rows, 2); assert(ew.board.message:find("incomplete"))
+    assert(ew.inspect("Tempest")); local late = e.f2t_po.callback
+    instance.controls.cancel.click(); eq(e.f2t_po.phase, "idle"); eq(e.F2CE.API.v1.commands._lease, nil)
+    late({}, nil, {planet="Tempest"}); eq(#ew.board.rows, 2); eq(ew.plan, nil)
+    assert(not ew.inspect("Tempest;quit")); eq(#e.sent, 3)
+end
+
+function tests.trailing_blanks_stop_at_message_or_timeout_and_manual_output_is_visible()
+    local e = environment(); local ew = e.F2T_EXCHANGE_WALKER
+    assert(ew.inspect("Tempest"))
+    e.finishCapture("exchange", "Tempest", {}, "0 commodities, summary")
+    local before = e.deleted
+    e.line = "0 commodities, summary"; e.load("src/triggers/po/capture_tail_boundary.lua")
+    for _ = 1, 3 do e.line = ""; e.load("src/triggers/po/capture_blank.lua") end
+    eq(e.deleted, before + 3); e.load("src/triggers/po/capture_blank.lua"); eq(e.deleted, before + 3)
+    assert(ew.inspect("Tempest")); e.finishCapture("exchange", "Tempest", {}, "0 commodities, summary")
+    before = e.deleted
+    e.line = "Your comm unit crackles..."; e.load("src/triggers/po/capture_tail_boundary.lua")
+    e.line = ""; e.load("src/triggers/po/capture_blank.lua"); eq(e.deleted, before)
+    assert(ew.inspect("Tempest")); e.finishCapture("exchange", "Tempest", {}, "0 commodities, summary")
+    before = e.deleted; e.advance(0.6); e.line = ""; e.load("src/triggers/po/capture_blank.lua"); eq(e.deleted, before)
+    e.line = "Tempest exchange - all products:"; e.load("src/triggers/po/exchange_header.lua")
+    e.line = "Alloys: value 100ig/ton"; e.load("src/triggers/po/capture_line.lua"); eq(e.deleted, before)
 end
 
 function tests.current_room_ownership_loss_blocks_local_apply()

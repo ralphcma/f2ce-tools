@@ -119,6 +119,11 @@ function f2t_po_capture_exchange_complete(summary)
     local parsed = f2t_po_parse_exchange_buffer(f2t_po.capture_buffer, summary)
     local callback = f2t_po.callback
     local metadata = { planet = f2t_po.header_planet, kind = "exchange" }
+    -- Only the immediately following blank separator belongs to this response.
+    -- Bound both line count and time; unrelated nonblank output cancels it.
+    local tail = { summary = tostring(summary or ""), remaining = 3 }
+    F2T_PO_BLANK_TAIL = tail
+    tempTimer(0.5, function() if F2T_PO_BLANK_TAIL == tail then F2T_PO_BLANK_TAIL = nil end end)
     f2t_po_reset()
     if callback then
         callback(parsed, nil, metadata)

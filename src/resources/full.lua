@@ -73,28 +73,12 @@ Mux.createDeclarativeCondition({
     label = "ShipHasCargo"
 })
 
+Mux.createDeclarativeCondition({ id = "ExchangeWalkerFounder", label = "Founder or higher",
+    cond = { type = "gmcp_contains", path = "gmcp.char.vitals.rank",
+        values = "Founder,Engineer,Mogul,Technocrat,Gengineer,Magnate,Plutocrat,Syndicrat" } })
+
 Mux.registerWorkspace("f2ce-tools", {
     floatingPanes = {
-        {
-            activeContent = "exchange_walker_live",
-            contentState = {},
-            id = "pane_15",
-            name = "Exchange Walker",
-            type = "pane",
-            floating = true,
-            floatX = 80,
-            floatY = 140,
-            floatW = 780,
-            floatH = 360,
-            hidden = false,
-            mainConsoleHost = false,
-            showTitlebar = true,
-            closeable = true,
-            movable = true,
-            resizable = true,
-            minimizable = true,
-            contentable = true
-        },
         {
             activeContent = "fed2_local_players",
             anchor = {
@@ -340,6 +324,14 @@ Mux.registerWorkspace("f2ce-tools", {
                                 nameAlign = "center",
                                 propertiesButton = false,
                                 renamable = false
+                            },
+                            {
+                                _activeContent = "exchange_walker_live",
+                                name = "Exchange Walker", closeable = false, contentState = {},
+                                contentable = false, movable = true, visible = false,
+                                rules = { { id = "ew_founder", enabled = true,
+                                    cond = { ref = "ExchangeWalkerFounder" },
+                                    act = "mux.showSelf", actElse = "mux.hideSelf" } }
                             },
                             {
                                 _activeContent = "fed2_exchange",

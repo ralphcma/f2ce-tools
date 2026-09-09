@@ -2,5 +2,6 @@
   {"name": "controller"},
   {"name": "settings"},
   {"name": "bridge"},
+  {"name": "board"},
   {"name": "bootstrap"}
 ]

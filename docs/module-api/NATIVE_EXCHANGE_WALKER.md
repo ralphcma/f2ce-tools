@@ -3,11 +3,11 @@
 This branch integrates Exchange Walker into **the user's F2CE fork**, not an
 upstream-approved official release. It builds one `f2ce-tools` package containing
 the native `F2CE.API.v1` API and Walker. There is no separate Walker or
-`Fed2ModuleAPI` dependency for this module. FedHauler's existing compatibility
-package is unaffected and may still require the separate API.
+`Fed2ModuleAPI` dependency for this module. FedHauler 1.16.0 can use this native
+API directly; older FedHauler versions still require the separate API.
 
 Baseline: F2CE 3.3.0 plus the existing map-content lifecycle repair, native API
-1.1.0 candidate.1, and Walker 3.4.0-native.1 ported from the public Walker 3.3.3
+1.2.0 candidate.1, and Walker 3.4.0-native.2 ported from the public Walker 3.3.3
 source at `e7276b81f962b3c7e4c72c6b34a161e1d3415ba6`.
 
 ## Settings and defaults
@@ -50,12 +50,29 @@ preferences. Settings persistence belongs to Muxlet's existing profile storage.
    `ew preview [planet]`, then `ew apply`. Timer management still requires
    explicit `ew auto on`; `ew auto off`/`ew cancel` stops it.
 
-The content ID remains `exchange_walker_live` so existing saved assignments
-continue to resolve. New default Full workspaces include a resizable floating
-`pane_15`. Existing custom layouts are not replaced: existing Walker placement
-wins; optional placement only uses an empty existing pane numbered 15–32.
-If none exists, use the Content Library. Minimal/BYOW mode remains user-managed.
-Map, Galaxy, and foreign panes are never repurposed or deleted by Walker.
+The content ID remains `exchange_walker_live`. New Full workspaces include an
+**Exchange Walker tab beside Who, Events and Exchange**. Existing layouts are
+searched by their tab content, not a hard-coded pane number; one Walker tab is
+added without switching the active tab. An existing Walker tab is reused. If
+that host is absent, an existing Walker pane or empty pane 15–32 is used. Map,
+Galaxy and foreign content are never repurposed or deleted.
+
+The tab is hidden below **Founder** and while rank is unknown. Promotion reveals
+it; losing eligibility stops Walker and cancels its pending read-only capture.
+Both visibility and command entry points check rank.
+
+The table displays the last complete `display exchange <planet>` response:
+Commodity, Spread, Current, Min, Max, Efficiency and Net. Headers sort; numeric
+cells align right and signed Net/stock colors distinguish positive/negative
+values. Header and body widths resize together. Refresh, Preview, ON/OFF, Apply,
+Auto, Cancel, Settings and Clear controls are at the bottom.
+
+**Refresh is read-only and works while OFF**. It does not make an applicable
+plan or authorize writes. Incomplete or wrong-planet responses retain the last
+valid table with an error. Preview still requires ON, captures production too,
+and highlights changed cells in cyan with observed/proposed hover details.
+Apply remains explicit and acknowledgement-gated. Timer runs still require
+explicit Auto ON.
 
 Uninstalling F2CE stops Walker, cleans its runtime and removes its native
 preferences. Migration-source files are not deleted by the native module.
@@ -88,7 +105,11 @@ consumers. Reconnect now disables module authority, not just its current leases.
 
 The native PO parser handles one-line and wrapped rows directly. No parser
 replacement or standalone adapter loader is shipped. Blank suppression is
-limited to an identified active PO response, never general room output.
+limited to an identified active PO response and up to three immediately trailing
+blank separators within 0.5 seconds. A different nonblank message immediately
+ends trailing suppression. Room descriptions, chat and ordinary manually
+requested exchange displays outside a managed capture remain visible. Leading
+blanks before the identifying response header are not globally gagged.
 
 ## Source and release boundaries
 

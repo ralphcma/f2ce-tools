@@ -45,7 +45,7 @@ try {
     }
     $reader = [IO.StreamReader]::new($archive.GetEntry('f2ce-tools.xml').Open())
     try { $xmlText = $reader.ReadToEnd() } finally { $reader.Dispose() }
-    foreach ($marker in @('1.1.0-candidate.1', '3.4.0-native.1', $url, 'exchange_walker_live')) {
+    foreach ($marker in @('1.2.0-candidate.1', '3.4.0-native.2', $url, 'exchange_walker_live')) {
         if (-not $xmlText.Contains($marker)) { throw "Package missing integration marker $marker" }
     }
     if ($xmlText.Contains('fed2-module-api/src/fed2_module_api.lua')) { throw 'Unexpected separate API loader in native package' }

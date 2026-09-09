@@ -123,16 +123,17 @@ local function active(state)
     return type(state) == "table" and state.active == true
 end
 
-function adapter.nativeCommandBlocker()
+function adapter.nativeCommandBlocker(owned_hauling_price)
     if F2T_SPEEDWALK_OWNER ~= nil then
         return { kind = "navigation_owner", owner = tostring(F2T_SPEEDWALK_OWNER) }
     end
     if F2T_SPEEDWALK_ACTIVE == true then return { kind = "speedwalk" } end
     if active(F2T_MAP_EXPLORE_STATE) then return { kind = "map_exploration" } end
     if active(F2T_MAP_CIRCUIT_STATE) then return { kind = "map_circuit" } end
-    if active(F2T_HAULING_STATE) then return { kind = "hauling" } end
+    if active(F2T_HAULING_STATE) and not owned_hauling_price then return { kind = "hauling" } end
     if active(F2T_DEATH_STATE) then return { kind = "death_recovery" } end
     if F2T_PRICE_CAPTURE_ACTIVE == true then return { kind = "price_capture" } end
+    if F2T_PRICE_CALLBACK ~= nil then return { kind = "price_request" } end
     if active(F2T_BULK_STATE) then return { kind = "bulk_trade" } end
     if active(F2T_MAP_WHEREIS_CAPTURE) then return { kind = "whereis_capture" } end
     if active(F2T_MAP_DI_SYSTEM_CAPTURE) then return { kind = "system_capture" } end
@@ -207,6 +208,10 @@ function adapter.navState()
         current_step = tonumber(F2T_SPEEDWALK_CURRENT_STEP) or 0,
         total_steps = type(F2T_SPEEDWALK_DIR) == "table" and #F2T_SPEEDWALK_DIR or 0,
         interruption_pending = F2T_SPEEDWALK_CUSTOMS_PENDING == true,
+        room_id = tonumber(F2T_MAP_CURRENT_ROOM_ID),
+        waiting = F2T_SPEEDWALK_WAITING_FOR_MOVE,
+        expected_room_id = tonumber(F2T_SPEEDWALK_EXPECTED_ROOM_ID),
+        before_room_id = tonumber(F2T_SPEEDWALK_ROOM_BEFORE_MOVE),
     }
 end
 
@@ -219,9 +224,9 @@ end
 
 function adapter.priceCheck(commodity, options, done)
     if type(f2t_price_check_commodity) ~= "function" then done(nil, "built-in price provider unavailable"); return false end
-    f2t_price_check_commodity(commodity, function(canonical, buy_data, sell_data)
-        if buy_data == nil and sell_data == nil then done(nil, "built-in price request failed"); return end
-        done({ commodity = canonical or commodity, buy = clone(buy_data), sell = clone(sell_data), provider = "f2ce.builtin", scope = options and options.scope })
+    f2t_price_check_commodity(commodity, function(canonical, parsed, analysis)
+        if parsed == nil or analysis == nil then done(nil, "built-in price request failed"); return end
+        done({ commodity = canonical or commodity, parsed = clone(parsed), analysis = clone(analysis), provider = "f2ce.builtin", scope = options and options.scope })
     end)
     return true
 end
@@ -302,9 +307,107 @@ function adapter.mapReachability(from_room, to_room)
     return { reachable = reachable, from_room = from_room, to_room = to_room, directions = reachable and clone(speedWalkDir) or {}, rooms = reachable and clone(speedWalkPath) or {} }
 end
 
+function adapter.mapRoomIdentity(room)
+    if type(room) ~= "table" then return nil end
+    if room.num ~= nil or room.vnum ~= nil then
+        local num = tonumber(room.num or room.vnum)
+        if not num or num ~= math.floor(num) or type(room.system) ~= "string" or room.system == ""
+            or type(room.area) ~= "string" or room.area == "" or type(getRoomIDbyHash) ~= "function" then return nil end
+        local ok, id = pcall(getRoomIDbyHash, string.format("%s.%s.%d", room.system, room.area, num))
+        id = ok and tonumber(id) or nil
+        return id and id > 0 and id or nil
+    end
+    return tonumber(room.id)
+end
+function adapter.setting(component, key)
+    if type(f2t_settings_get) == "function" then return clone(f2t_settings_get(component, key)) end
+end
+function adapter.rankAtLeast(rank)
+    return type(f2t_is_rank_or_above) == "function" and f2t_is_rank_or_above(rank) == true
+end
+function adapter.deathState()
+    local state = clone(F2T_DEATH_STATE)
+    return type(state) == "table" and state or nil
+end
+function adapter.staminaState()
+    if type(F2T_STAMINA_STATE) ~= "table" then return nil end
+    local state = clone(F2T_STAMINA_STATE)
+    state.has_client = F2T_STAMINA_STATE.client_check_active ~= nil
+    state.client_check_active, state.client_pause_callback, state.client_resume_callback = nil, nil, nil
+    return state
+end
+function adapter.staminaOwns(callback)
+    return type(F2T_STAMINA_STATE) == "table" and F2T_STAMINA_STATE.client_check_active == callback
+end
+function adapter.staminaRegister(config)
+    return f2t_stamina_register_client(config)
+end
+function adapter.staminaUnregister(callback)
+    if adapter.staminaOwns(callback) then f2t_stamina_unregister_client(); return true end
+    return false
+end
+function adapter.staminaStart() f2t_stamina_start_monitoring(); return true end
+function adapter.staminaCheck() f2t_stamina_check_vitals(); return true end
+function adapter.consumerCapabilities()
+    return {
+        ["protection.stamina"] = type(f2t_stamina_register_client) == "function"
+            and type(f2t_stamina_unregister_client) == "function" and type(f2t_stamina_check_vitals) == "function"
+            and type(f2t_stamina_start_monitoring) == "function" and type(f2t_settings_get) == "function",
+        ["protection.death"] = type(F2T_DEATH_STATE) == "table",
+        ["po.discovery"] = type(f2t_map_di_system_capture_start) == "function" and type(f2t_capture_close) == "function",
+        ["trading.bulk"] = type(f2t_bulk_buy_start) == "function" and type(f2t_bulk_sell_start) == "function"
+            and type(f2t_bulk_buy_error) == "function" and type(f2t_bulk_sell_error) == "function",
+        ["prices.analysis"] = type(f2t_price_parse_data) == "function" and type(f2t_price_get_top_exchanges) == "function"
+            and type(f2t_price_calculate_average) == "function",
+        ["settings.read"] = type(f2t_settings_get) == "function",
+    }
+end
+function adapter.systemStart(system, callback) f2t_map_di_system_capture_start(system, callback); return true end
+function adapter.systemCancel(callback)
+    if type(F2T_MAP_DI_SYSTEM_CAPTURE) == "table" and F2T_MAP_DI_SYSTEM_CAPTURE.callback == callback then
+        f2t_capture_close("di_system"); F2T_MAP_DI_SYSTEM_CAPTURE = { active = false }
+    end
+    return true
+end
+function adapter.bulkStart(kind, commodity, lots, callback)
+    local fn = kind == "buy" and f2t_bulk_buy_start or f2t_bulk_sell_start
+    return fn(commodity, lots, callback) ~= false
+end
+function adapter.bulkCancel(callback, reason)
+    if type(F2T_BULK_STATE) == "table" and F2T_BULK_STATE.callback == callback and F2T_BULK_STATE.active then
+        local kind = F2T_BULK_STATE.command
+        if kind == "buy" then f2t_bulk_buy_error(reason) elseif kind == "sell" then f2t_bulk_sell_error(reason)
+        else return false end
+    end
+    return true
+end
+function adapter.priceAnalyze(commodity, lines, count)
+    count = tonumber(count) or tonumber(adapter.setting("commodities", "results_count")) or 5
+    if count ~= count or count ~= math.floor(count) or count < 1 or count > 20 then return nil, "invalid price result count" end
+    local parsed = f2t_price_parse_data(lines)
+    if type(parsed) ~= "table" or type(parsed.buy) ~= "table" or type(parsed.sell) ~= "table"
+        or (#parsed.buy == 0 and #parsed.sell == 0) then return nil, "price response contains no usable rows" end
+    for _, rows in ipairs({ parsed.buy, parsed.sell }) do
+        for _, row in ipairs(rows) do
+            local price = type(row) == "table" and tonumber(row.price)
+            if not price or price ~= price or price <= 0 or price == math.huge then return nil, "invalid price row" end
+        end
+    end
+    local top = f2t_price_get_top_exchanges(parsed, count)
+    local buy, sell = f2t_price_calculate_average(top.buy), f2t_price_calculate_average(top.sell)
+    return { commodity = commodity, parsed = clone(parsed), analysis = { commodity = commodity,
+        avg_buy_price = buy, avg_sell_price = sell, profit = buy - sell,
+        margin = sell > 0 and ((buy - sell) / sell) * 100 or 0, result_count = count,
+        top_buy = clone(top.buy), top_sell = clone(top.sell) } }
+end
+function adapter.priceDisplay(commodity, analysis) f2t_price_display_commodity(commodity, clone(analysis)); return true end
+
 local function install()
     local current = F2CE and F2CE.API and F2CE.API.v1
-    if current and current._install then current._install(adapter) end
+    if current and current._install then
+        current._install(adapter)
+        if type(raiseEvent) == "function" then raiseEvent("f2ceApiReady") end
+    end
 end
 
 -- Package scripts are evaluated before a zero-delay timer fires, so the
