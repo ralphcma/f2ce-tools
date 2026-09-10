@@ -1,5 +1,31 @@
 # Module API verification
 
+## 2026-09-10 Exchange Walker Mudlet 5.0.1 footer compatibility
+
+Candidate: `f2ce-tools-3.3.0-native-ew12.mpackage`; Walker
+3.4.0-native.8. API 1.2.0-candidate.3 is unchanged.
+
+SHA-256: `aa103bb5e8c492934bab702020a9c8aff114494726fdf4db6e7c506336373a2b`.
+
+Live Mudlet reported `[string "Script: board"]:327: attempt to call method
+'setToolTip' (a nil value)` while constructing the integrated Exchange Walker
+tab. Mudlet 5.0.1's `Geyser.CommandLine` does not implement the Label-only
+tooltip method. Because the input was constructed before Refresh, Preview, and
+the action rows, that uncaught enhancement call explained the visible input and
+missing buttons exactly.
+
+All board tooltip calls are now optional and protected. The test Geyser command
+line intentionally omits `setToolTip`, matching the installed runtime, while
+the visible Inspect label retains the field explanation and its supported
+tooltip. Per-widget footer layout is also isolated so a future unsupported
+primitive cannot prevent later controls from being positioned.
+
+Source and exact-package runs pass all 80 native groups: API 23, adapter 5,
+Walker 29, startup 7, topology 8, map lifecycle 1, and Galaxy lifecycle 7.
+All 250 Lua checks, 32 metadata checks, and 221 compiled-script/source matches
+pass. No profile was modified and no package was installed, pushed, or
+released.
+
 ## 2026-09-10 Exchange Walker stale-tab recovery and board polish
 
 Candidate: `f2ce-tools-3.3.0-native-ew11.mpackage`; Walker

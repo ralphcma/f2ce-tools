@@ -22,6 +22,15 @@ local function copy(value)
     if type(value) ~= "table" then return value end
     local result = {}; for key, item in pairs(value) do result[key] = copy(item) end; return result
 end
+local function set_tooltip(widget, text)
+    -- Geyser.CommandLine in Mudlet 5.0.1 has no setToolTip method. Tooltips
+    -- are enhancement-only: an unsupported widget must never abort the board
+    -- constructor and strand every control created after it.
+    if widget and type(widget.setToolTip) == "function" then
+        return pcall(widget.setToolTip, widget, text)
+    end
+    return false
+end
 function EW.ui.setBoard(planet, rows)
     if type(rows) ~= "table" or not tonumber(rows._expected_count) or #rows ~= tonumber(rows._expected_count) then return false end
     local seen = {}
@@ -111,7 +120,7 @@ for _, column in ipairs(columns) do
         -- color can never abort the entire Mux content apply.
         cell:echo(string.format("<div align='%s' style='white-space:nowrap;font-family:Consolas,monospace;font-size:%dpt;color:%s;'>%s</div>",
             key == "name" and "left" or "right", font, color, escape(text)), "nocolor")
-        cell:setToolTip(changed and string.format("%s: observed %s -> proposed %s. Apply requires an explicit reviewed plan.", row.name, tostring(value), tostring(proposed)) or tostring(value))
+        set_tooltip(cell, changed and string.format("%s: observed %s -> proposed %s. Apply requires an explicit reviewed plan.", row.name, tostring(value), tostring(proposed)) or tostring(value))
         cell:setClickCallback(function() end) -- informational cells never trade
     end
 end
@@ -186,7 +195,15 @@ function EW.ui.resizeTable(target)
     local pane_width, pane_height = target_dimensions(target)
     local width = math.max(1, pane_width - 17)
     local footer_y = math.max(44, pane_height - 142)
-    local function place(widget, x, y, w, h) widget:move(x, y); widget:resize(w, h) end
+    local function place(widget, x, y, w, h)
+        -- Keep laying out the remaining footer if a future Geyser primitive
+        -- lacks one of the ordinary Container methods. A single decorative or
+        -- input widget must not make every later action disappear.
+        if not widget then return false end
+        local moved = type(widget.move) == "function" and pcall(widget.move, widget, x, y)
+        local resized = type(widget.resize) == "function" and pcall(widget.resize, widget, w, h)
+        return moved and resized or false
+    end
     place(instance.background, 0, 0, pane_width, pane_height)
     place(instance.title, 0, 0, pane_width, 22)
     place(instance.header, 0, 22, pane_width, 22)
@@ -264,7 +281,7 @@ local function update_status(instance, message)
     instance.status:echo("<div style='font-family:Consolas;font-size:8pt;padding:2px 5px;'>"
         .. "<span style='color:" .. state_color .. ";font-weight:bold;'>" .. escape(state) .. "</span><br>"
         .. "<span style='color:#aeb8cc;'>" .. escape(detail) .. "</span></div>")
-    instance.status:setToolTip(message .. "\nTargets: " .. (#EW.settings.targets > 0 and table.concat(EW.settings.targets, ", ") or "none; set these in Settings"))
+    set_tooltip(instance.status, message .. "\nTargets: " .. (#EW.settings.targets > 0 and table.concat(EW.settings.targets, ", ") or "none; set these in Settings"))
 end
 function EW.ui.updateTable()
     for target, instance in pairs(EW.ui.instances) do
@@ -313,7 +330,7 @@ function EW.ui.buildTable(target)
         local key = column.key
         local header = label(instance.header, id .. "col" .. index, 0, 0, 1, 22, column.label,
             function() f2tTableToggleSort(id, key) end)
-        header:setToolTip("Sort by " .. column.label)
+        set_tooltip(header, "Sort by " .. column.label)
         instance.headers[index], header_map[key] = header, header
     end
     f2tTableSetColHdrs(id, header_map)
@@ -321,10 +338,10 @@ function EW.ui.buildTable(target)
     set_style(instance.status, "background-color:#111827;color:#aeb8cc;border:1px solid #33415c;border-radius:3px;")
     instance.planet_label = label(target.content, id .. "planet_label", 0, 0, 56, 30, "<center>Inspect</center>")
     set_style(instance.planet_label, "background-color:#182235;color:#b9c9e6;border:1px solid #3d4d68;border-radius:3px;font-family:Consolas;font-size:8pt;font-weight:bold;")
-    instance.planet_label:setToolTip("One-off planet to inspect. This does not change the scheduled target list.")
+    set_tooltip(instance.planet_label, "One-off planet to inspect. This does not change the scheduled target list.")
     local input = Geyser.CommandLine:new({ name = id .. "planet", x = 0, y = "100%-70px", width = "60%", height = 30 }, target.content)
     set_style(input, "background-color:#090d16;color:#f0f5ff;border:1px solid #58719a;border-radius:3px;padding:2px 6px;font-family:Consolas;font-size:9pt;")
-    input:setToolTip("Type a planet name. Press Enter or Refresh for a read-only exchange scan; Preview calculates proposed settings without applying them.")
+    set_tooltip(input, "Type a planet name. Press Enter or Refresh for a read-only exchange scan; Preview calculates proposed settings without applying them.")
     local current = api() and api().data.get("room")
     local vitals = api() and api().data.get("vitals")
     local owned = current and vitals and current.owner == vitals.name and EW.policy.safePlanet(current.area)
@@ -352,12 +369,12 @@ function EW.ui.buildTable(target)
         cancel={"#6f2630", "#cf6572"}, settings={"#39445a", "#70809f"}, clear={"#303849", "#65728b"},
     }
     for key, colors in pairs(palette) do set_style(instance.controls[key], button_css(colors[1], colors[2])) end
-    instance.controls.refresh:setToolTip("Read-only: capture and display the selected planet's remote exchange.")
-    instance.controls.preview:setToolTip("Calculate proposed spread and stock changes for the selected planet. Sends no setting commands.")
-    instance.controls.apply:setToolTip("Apply the current reviewed and unexpired preview plan.")
-    instance.controls.cancel:setToolTip("Cancel the current capture or discard unsent planned actions.")
-    instance.controls.settings:setToolTip("Open Exchange Walker targets, schedule, spreads, reserves, and commodity exclusions.")
-    instance.controls.clear:setToolTip("Clear the displayed exchange table and preview from this board.")
+    set_tooltip(instance.controls.refresh, "Read-only: capture and display the selected planet's remote exchange.")
+    set_tooltip(instance.controls.preview, "Calculate proposed spread and stock changes for the selected planet. Sends no setting commands.")
+    set_tooltip(instance.controls.apply, "Apply the current reviewed and unexpired preview plan.")
+    set_tooltip(instance.controls.cancel, "Cancel the current capture or discard unsent planned actions.")
+    set_tooltip(instance.controls.settings, "Open Exchange Walker targets, schedule, spreads, reserves, and commodity exclusions.")
+    set_tooltip(instance.controls.clear, "Clear the displayed exchange table and preview from this board.")
     -- Keep operational messages in one status line, not mixed into data rows.
     instance.console = { cecho = function(_, text)
         board.message = tostring(text):gsub("<[^>]+>", ""):gsub("\n", " "); update_status(instance, board.message)

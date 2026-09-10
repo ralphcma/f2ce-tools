@@ -91,7 +91,13 @@ local function environment(options)
     e.Geyser = { Label = { new = function(_, spec, parent) return widget(spec, parent) end },
         MiniConsole = { new = function(_, spec, parent) return widget(spec, parent) end },
         ScrollBox = { new = function(_, spec, parent) return widget(spec, parent) end },
-        CommandLine = { new = function(_, spec, parent) return widget(spec, parent) end } }
+        -- Match Mudlet 5.0.1: Geyser.CommandLine inherits layout methods but
+        -- does not implement the Label-only setToolTip method.
+        CommandLine = { new = function(_, spec, parent)
+            local command_line = widget(spec, parent)
+            command_line.setToolTip = nil
+            return command_line
+        end } }
     function e.f2t_ui_pt(value) return value .. "pt" end
     function e.makeMux()
         local mux = { _ready = true, _content = {}, panes = {}, registrations = 0, applied = {},
@@ -522,7 +528,8 @@ function tests.board_fills_narrow_and_resized_panes_without_color_errors()
     assert(instance.controls.toggle.text:find("TURN ON", 1, true))
     assert(instance.controls.auto.text:find("AUTO ON", 1, true))
     assert(instance.planet_label.text:find("Inspect", 1, true))
-    assert(instance.input.tooltip:find("read%-only"))
+    eq(instance.input.tooltip, nil, "Mudlet 5.0.1 command lines do not support tooltips")
+    assert(instance.planet_label.tooltip:find("scheduled target list"))
     assert(instance.controls.refresh.css:find("#234f82", 1, true))
     eq(instance.background.echo_color, "nocolor", "board labels bypass Geyser color parsing")
     for _, size in ipairs({{417,828},{643,450},{1000,1000},{417,828}}) do
