@@ -171,6 +171,40 @@ local function target_is_active(target)
     end
     return true
 end
+local function restore_paint_order(instance)
+    -- Geyser.Container:show() reveals children through pairs(windowList), whose
+    -- traversal order is undefined. On a board first constructed in a hidden
+    -- tab, that can leave this full-pane black label above every useful widget
+    -- when the tab is revealed. A directly mounted pane is built visible and
+    -- therefore does not expose the defect. Pin the background beneath its
+    -- siblings, then raise the visible board layers in their intended order.
+    if instance.background and type(instance.background.lower) == "function" then
+        pcall(instance.background.lower, instance.background)
+    end
+    local foreground = { instance.title, instance.header, instance.scroll,
+        instance.status, instance.planet_label, instance.input }
+    for _, widget in ipairs(foreground) do
+        if widget and type(widget.raise) == "function" then pcall(widget.raise, widget) end
+    end
+    for _, key in ipairs({ "refresh", "preview", "toggle", "apply", "auto", "cancel", "settings", "clear" }) do
+        local widget = instance.controls and instance.controls[key]
+        if widget and type(widget.raise) == "function" then pcall(widget.raise, widget) end
+    end
+end
+local function reveal_active(target, instance)
+    if not target_is_active(target) then return end
+    -- Muxlet/Geyser keep explicit and inherited visibility separately. Clear
+    -- both on the tab container and framework-owned content slot. Container
+    -- show(true) then clears inherited hiding recursively while preserving any
+    -- deliberate explicit hide on state-dependent children such as `empty`.
+    for _, container in ipairs({ target.content, target._contentSlot }) do
+        if container and type(container.show) == "function" then
+            pcall(container.show, container, false)
+            pcall(container.show, container, true)
+        end
+    end
+    restore_paint_order(instance)
+end
 local function label(parent, name, x, y, width, height, text, action)
     local widget = Geyser.Label:new({ name = name, x = x, y = y, width = width, height = height, fgColor = "#d8d8d8" }, parent)
     widget:setStyleSheet("background-color:#171b29;color:#ddd;border:1px solid #353c50;font-family:Consolas;font-size:9pt;")
@@ -236,21 +270,7 @@ function EW.ui.resizeTable(target)
 end
 function EW.ui.refreshMounted(target, settle)
     if not EW.ui.instanceHealthy(target) then return false end
-    if target_is_active(target) then
-        -- Muxlet 2.3.2 can restore a selected tab whose parent and framework
-        -- content slot remain explicitly hidden. Reveal both layers: showing
-        -- only the Walker widgets cannot paint through a hidden tab container.
-        for _, container in ipairs({ target.content, target._contentSlot }) do
-            if container and type(container.show) == "function" then
-                -- Geyser keeps explicit `hidden` and inherited `auto_hidden`
-                -- independently. Plain show() clears only `hidden`; show(true)
-                -- clears only `auto_hidden`. A slot created while its saved tab
-                -- was inactive can carry both, so clear both in that order.
-                pcall(container.show, container, false)
-                pcall(container.show, container, true)
-            end
-        end
-    end
+    reveal_active(target, EW.ui.instances[target])
     return EW.ui.reflowTable(target, settle == true)
 end
 function EW.ui.reflowTable(target, settle)
@@ -260,6 +280,7 @@ function EW.ui.reflowTable(target, settle)
         if F2T_EXCHANGE_WALKER ~= EW or EW.ui.instances[target] ~= instance then return end
         EW.ui.resizeTable(target)
         EW.ui.updateTable()
+        reveal_active(target, instance)
     end
     reflow()
     if settle and type(tempTimer) == "function" then
@@ -387,6 +408,7 @@ function EW.ui.buildTable(target)
         board.message = tostring(text):gsub("<[^>]+>", ""):gsub("\n", " "); update_status(instance, board.message)
     end, clear = function() end }
     EW.ui.reflowTable(target, true); EW.refresh()
+    restore_paint_order(instance)
 end
 function EW.ui.destroyTable(target)
     local instance = EW.ui.instances[target]

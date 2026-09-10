@@ -1,5 +1,31 @@
 # Module API verification
 
+## 2026-09-10 Exchange Walker tab paint-order recovery
+
+Candidate: `f2ce-tools-3.3.0-native-ew15.mpackage`; Walker
+3.4.0-native.11. API 1.2.0-candidate.3 is unchanged.
+
+SHA-256: `1c3eb07757e68b2a18333e7b5461e9e2198ecb93b60e80ef35b223e6fa26beb3`.
+
+Ersella's saved workspace proves ew14 loaded and completed its reconstruction:
+the selected `Exchange Walker` is a new locked tab with the registered Founder
+rule and the expected content ID. A diagnostic copy of the same content in
+floating pane_11 renders correctly, isolating the remaining failure to hidden
+tab construction and reveal rather than the board renderer.
+
+Mudlet 5.0.1 Geyser reveals a container's children through
+`pairs(windowList)`, which does not preserve paint order. A board first built in
+an inactive tab can therefore reveal its full-size black background after its
+foreground and cover every otherwise healthy widget. Walker now activates a
+selected replacement before applying content, routes Muxlet resize/reveal
+callbacks through the complete visibility repair, and pins the background below
+the table and controls after every immediate and settled reflow.
+
+Source and exact-package verification pass all 81 native groups: API 23,
+adapter 5, Walker 30, startup 7, topology 8, map lifecycle 1, and Galaxy
+lifecycle 7. All 250 Lua checks, 32 metadata checks, and 221 packaged-script
+comparisons pass. No profile was modified and pane_11 was not removed.
+
 ## 2026-09-10 Exchange Walker native-tab reconstruction
 
 Candidate: `f2ce-tools-3.3.0-native-ew14.mpackage`; Walker

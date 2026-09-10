@@ -16,7 +16,7 @@ if type(previous) == "table" and type(previous.shutdown) == "function" then prev
 local EW = { NATIVE = true }
 F2T_EXCHANGE_WALKER = EW
 
-EW.VERSION = "3.4.0-native.10"
+EW.VERSION = "3.4.0-native.11"
 EW.API_CONTRACT = "ExchangeWalkerLive/1.0"
 EW.MIN_F2CE_VERSION = "3.3.0"
 EW.enabled = false
@@ -405,7 +405,8 @@ function EW.ui.registerMuxContent()
     end,
     remove = function(target) destroy_mux_content(target) end,
     resize = function(target)
-      if EW.ui.reflowTable then EW.ui.reflowTable(target, false)
+      if EW.ui.refreshMounted then EW.ui.refreshMounted(target, false)
+      elseif EW.ui.reflowTable then EW.ui.reflowTable(target, false)
       elseif EW.ui.resizeTable then EW.ui.resizeTable(target); update_ui() end
     end,
     serialize = function(_target) return {} end,
@@ -413,7 +414,8 @@ function EW.ui.registerMuxContent()
       if EW.ui.reflowTable then EW.ui.reflowTable(target, true) else update_ui() end
     end,
     onReveal = function(target)
-      if EW.ui.reflowTable then EW.ui.reflowTable(target, true) else update_ui() end
+      if EW.ui.refreshMounted then EW.ui.refreshMounted(target, true)
+      elseif EW.ui.reflowTable then EW.ui.reflowTable(target, true) else update_ui() end
     end,
   }
   local ok, reason = pcall(Mux.registerContent, EW.ui.content_id, definition)

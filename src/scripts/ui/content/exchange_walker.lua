@@ -108,12 +108,16 @@ local function rebuild_named_tab(ew, host, old_tab, content_id)
     local tab = host:addTab("Exchange Walker", position)
     if not tab then return nil, "Muxlet could not recreate the Exchange Walker tab" end
     apply_native_tab_settings(tab)
-    if not ensure_applied(ew, tab, content_id) then
-        return nil, "Muxlet did not build the recreated Exchange Walker tab"
-    end
+    -- A selected replacement must be active before Muxlet creates its content
+    -- slot. Building first leaves the new tab's base container hidden, which is
+    -- exactly the lifecycle difference between the black tab and a working
+    -- direct-pane mount.
     if was_active then
         if type(host.activateTab) == "function" then host:activateTab(tab.id)
         elseif type(host._activateTabObj) == "function" then host:_activateTabObj(tab) end
+    end
+    if not ensure_applied(ew, tab, content_id) then
+        return nil, "Muxlet did not build the recreated Exchange Walker tab"
     end
     return tab
 end

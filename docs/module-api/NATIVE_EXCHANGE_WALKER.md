@@ -7,7 +7,7 @@ the native `F2CE.API.v1` API and Walker. There is no separate Walker or
 API directly; older FedHauler versions still require the separate API.
 
 Baseline: F2CE 3.3.0 plus the existing map-content lifecycle repair, native API
-1.2.0 candidate.3, and Walker 3.4.0-native.10 ported from the public Walker 3.3.3
+1.2.0 candidate.3, and Walker 3.4.0-native.11 ported from the public Walker 3.3.3
 source at `e7276b81f962b3c7e4c72c6b34a161e1d3415ba6`.
 
 ## Settings and defaults
@@ -130,6 +130,16 @@ at the same index with the native locked settings, installs the Founder rule
 through Muxlet's native rule API, reapplies Walker content, and restores active
 selection. The Full workspace definition now carries the same complete tab
 settings, so fresh profiles take the native path without migration.
+
+Candidate `native-ew15` addresses the tab-only paint lifecycle confirmed by a
+working copy of the same Walker content in a direct floating pane. Muxlet can
+construct a restored tab's content while the tab is inactive, while Mudlet
+5.0.1 Geyser recursively shows the tab's children through an unordered
+`pairs(windowList)` traversal. Walker's full-size black background could then
+paint above the title, table, and controls even though the board instance was
+complete. Selected replacement tabs are activated before content construction;
+active refresh/resize clears both visibility flags; and every reflow explicitly
+lowers the background and raises the foreground layers in their intended order.
 
 **Refresh is read-only and works while OFF**. It does not make an applicable
 plan or authorize writes. Incomplete or wrong-planet responses retain the last

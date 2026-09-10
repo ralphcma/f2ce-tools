@@ -91,6 +91,8 @@ local function environment(options)
         function w:hide(auto)
             if auto then self.auto_hidden = true else self.hidden = true end
         end
+        function w:lower() self.lowered = (self.lowered or 0) + 1 end
+        function w:raise() self.raised = (self.raised or 0) + 1 end
         function w:clear() self.history = {} end
         function w:delete() self.deleted = true end
         return w
@@ -154,6 +156,9 @@ local function environment(options)
         end
         function mux._applyContent(target, key)
             mux.applied[#mux.applied + 1] = target.id
+            mux.applied_active = mux.applied_active or {}
+            mux.applied_active[#mux.applied_active + 1] = not target.pane
+                or target.pane._activeTabId == target.id
             local old = mux._content[target._activeContent]
             if old and old.remove then old.remove(target) end
             mux._content[key].apply(target); target._activeContent = key
@@ -573,6 +578,7 @@ function tests.board_fills_narrow_and_resized_panes_without_color_errors()
     assert(instance.planet_label.tooltip:find("scheduled target list"))
     assert(instance.controls.refresh.css:find("#234f82", 1, true))
     eq(instance.background.echo_color, "nocolor", "board labels bypass Geyser color parsing")
+    assert((instance.background.lowered or 0) > 0, "full-pane background is pinned below board controls")
     for _, size in ipairs({{417,828},{643,450},{1000,1000},{417,828}}) do
         target.content:resize(size[1], size[2]); ew.ui.resizeTable(target); ew.ui.updateTable()
         eq(instance.background:get_height(), size[2])
@@ -682,6 +688,7 @@ function tests.malformed_live_tab_is_deleted_and_rebuilt_at_same_active_position
     eq(ew.ui.instances[malformed], nil, "old Geyser tree is torn down")
     local replacement = pane._tabs[4]
     assert(replacement ~= malformed); eq(pane._activeTabId, replacement.id)
+    assert(e.Mux.applied_active[#e.Mux.applied_active], "selected replacement is active before content apply")
     eq(replacement.name, "Exchange Walker"); eq(replacement.renamable, false)
     eq(replacement.closeable, false); eq(replacement.contentable, false)
     eq(replacement.propertiesButton, false); eq(replacement.rules[1].id, "ew_founder")
