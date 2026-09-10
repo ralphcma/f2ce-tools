@@ -241,7 +241,14 @@ function EW.ui.refreshMounted(target, settle)
         -- content slot remain explicitly hidden. Reveal both layers: showing
         -- only the Walker widgets cannot paint through a hidden tab container.
         for _, container in ipairs({ target.content, target._contentSlot }) do
-            if container and type(container.show) == "function" then pcall(container.show, container) end
+            if container and type(container.show) == "function" then
+                -- Geyser keeps explicit `hidden` and inherited `auto_hidden`
+                -- independently. Plain show() clears only `hidden`; show(true)
+                -- clears only `auto_hidden`. A slot created while its saved tab
+                -- was inactive can carry both, so clear both in that order.
+                pcall(container.show, container, false)
+                pcall(container.show, container, true)
+            end
         end
     end
     return EW.ui.reflowTable(target, settle == true)

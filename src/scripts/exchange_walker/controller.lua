@@ -16,7 +16,7 @@ if type(previous) == "table" and type(previous.shutdown) == "function" then prev
 local EW = { NATIVE = true }
 F2T_EXCHANGE_WALKER = EW
 
-EW.VERSION = "3.4.0-native.8"
+EW.VERSION = "3.4.0-native.9"
 EW.API_CONTRACT = "ExchangeWalkerLive/1.0"
 EW.MIN_F2CE_VERSION = "3.3.0"
 EW.enabled = false

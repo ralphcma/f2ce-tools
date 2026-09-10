@@ -7,7 +7,7 @@ the native `F2CE.API.v1` API and Walker. There is no separate Walker or
 API directly; older FedHauler versions still require the separate API.
 
 Baseline: F2CE 3.3.0 plus the existing map-content lifecycle repair, native API
-1.2.0 candidate.3, and Walker 3.4.0-native.8 ported from the public Walker 3.3.3
+1.2.0 candidate.3, and Walker 3.4.0-native.9 ported from the public Walker 3.3.3
 source at `e7276b81f962b3c7e4c72c6b34a161e1d3415ba6`.
 
 ## Settings and defaults
@@ -108,6 +108,14 @@ Preview, and the action rows were created. Optional tooltip setup is now
 capability-checked, and footer positioning continues past any unsupported
 widget layout method. The visible **Inspect** label explains the field while
 its label tooltip retains the one-off-versus-scheduled distinction.
+
+Candidate `native-ew13` completes saved-tab visibility recovery. Geyser tracks
+explicit `hidden` and inherited `auto_hidden` flags independently; plain
+`show()` clears only the former. A content slot built while Exchange Walker was
+an inactive restored tab could therefore retain `auto_hidden=true` after the
+tab itself became active, producing a fully valid but black mount. Active-tab
+repair now clears both flags on the tab content and Muxlet-owned content slot
+before reflowing the board.
 
 **Refresh is read-only and works while OFF**. It does not make an applicable
 plan or authorize writes. Incomplete or wrong-planet responses retain the last

@@ -61,7 +61,7 @@ local function environment(options)
     end
     e.widgets = {}
     local function widget(spec, parent)
-        local w = { name = spec.name, spec = spec, parent = parent, history = {} }
+        local w = { name = spec.name, spec = spec, parent = parent, history = {}, hidden = false, auto_hidden = false }
         if spec.name then e.widgets[spec.name] = w end
         function w:echo(text, color)
             -- Geyser Label:echo treats a second argument as a color. A bare
@@ -82,8 +82,15 @@ local function environment(options)
         function w:setAction(fn) self.action = fn end
         function w:setColor() end
         function w:enableAutoWrap() end
-        function w:show() self.hidden = false end
-        function w:hide() self.hidden = true end
+        -- Match Geyser.Container: explicit and inherited visibility are
+        -- independent; show() does not clear auto_hidden and show(true) does
+        -- not clear hidden.
+        function w:show(auto)
+            if auto then self.auto_hidden = false else self.hidden = false end
+        end
+        function w:hide(auto)
+            if auto then self.auto_hidden = true else self.hidden = true end
+        end
         function w:clear() self.history = {} end
         function w:delete() self.deleted = true end
         return w
@@ -596,12 +603,19 @@ function tests.active_existing_tab_repairs_hidden_content_slot()
     local ew = e.F2T_EXCHANGE_WALKER
     local target = e.Mux.panes.pane_2._tabs[4]
     target.pane._activeTabId = target.id
-    target.content.hidden = true
-    target._contentSlot = e.widgets.__missing or { hidden=true, show=function(self) self.hidden=false end }
+    target.content.hidden, target.content.auto_hidden = true, true
+    target._contentSlot = {
+        hidden = true, auto_hidden = true,
+        show = function(self, auto)
+            if auto then self.auto_hidden = false else self.hidden = false end
+        end,
+    }
     local placed = ew.ui.placeRegisteredContent(
         ew.ui.content_id, ew.ui.preferred_pane_start, ew.ui.preferred_pane_end)
     assert(placed); eq(target.content.hidden, false, "active tab container is revealed")
+    eq(target.content.auto_hidden, false, "active tab inherited visibility is revealed")
     eq(target._contentSlot.hidden, false, "active tab content slot is revealed")
+    eq(target._contentSlot.auto_hidden, false, "content slot inherited visibility is revealed")
     assert(ew.ui.instanceHealthy(target))
 end
 

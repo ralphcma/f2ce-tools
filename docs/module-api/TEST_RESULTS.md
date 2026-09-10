@@ -1,5 +1,32 @@
 # Module API verification
 
+## 2026-09-10 Exchange Walker restored-tab inherited visibility recovery
+
+Candidate: `f2ce-tools-3.3.0-native-ew13.mpackage`; Walker
+3.4.0-native.9. API 1.2.0-candidate.3 is unchanged.
+
+SHA-256: `675803813537a705f50ca33c086af7b01a66ed88b6e47f34adb227f882bd357f`.
+
+Live inspection confirmed that Ersella had ew12 installed and the selected
+`Exchange Walker` tab was correctly persisted with
+`_activeContent: exchange_walker_live`. The black surface therefore was not a
+stale binding or missing package. Inspection of Mudlet 5.0.1's
+`Geyser.Container` showed the remaining defect: explicit `hidden` and inherited
+`auto_hidden` flags are independent, while plain `show()` clears only the
+former. The Muxlet-owned slot built while the restored tab was inactive could
+remain `auto_hidden=true` after our earlier one-call reveal.
+
+Active-tab repair now clears both visibility flags, in the required order, on
+the tab content and Muxlet-owned content slot before reflow. The offline Geyser
+mock now models Mudlet's two-flag behavior, and the saved-tab test starts with
+both flags asserted on both layers and verifies all four are cleared.
+
+Source and exact-package runs pass all 80 native groups: API 23, adapter 5,
+Walker 29, startup 7, topology 8, map lifecycle 1, and Galaxy lifecycle 7.
+All 250 Lua checks, 32 metadata checks, and 221 compiled-script/source matches
+pass. No profile was modified and no package was installed, pushed, or
+released.
+
 ## 2026-09-10 Exchange Walker Mudlet 5.0.1 footer compatibility
 
 Candidate: `f2ce-tools-3.3.0-native-ew12.mpackage`; Walker
