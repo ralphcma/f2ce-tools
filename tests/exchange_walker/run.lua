@@ -609,6 +609,21 @@ function tests.stale_named_exchange_walker_tab_is_rebound_to_native_content()
     assert(ew.ui.instanceHealthy(target), "rebound tab contains a complete Walker board")
 end
 
+function tests.stale_named_tab_wins_over_a_temporary_direct_pane_mount()
+    local e = environment({tabHost=true, staleNamedTab=true}); e.advance(0.25)
+    local ew = e.F2T_EXCHANGE_WALKER
+    local named = e.Mux.panes.pane_2._tabs[4]
+    local definition = e.Mux._content[ew.ui.content_id]
+    definition.remove(named); named._activeContent = "fed2_cargo"
+    local temporary = e.Mux.panes.pane_16
+    e.Mux._applyContent(temporary, ew.ui.content_id, true)
+    assert(ew.ui.instanceHealthy(temporary), "temporary pane reproduces the working workaround")
+    local placed, pane, status = ew.ui.placeDefault()
+    assert(placed, tostring(pane)); eq(pane, "pane_2"); eq(status, "existing-tab")
+    eq(named._activeContent, ew.ui.content_id, "the intended named tab is still repaired")
+    assert(ew.ui.instanceHealthy(named))
+end
+
 function tests.existing_tab_is_rebuilt_after_hot_reload_widget_teardown()
     local e = environment({tabHost=true}); e.advance(0.25)
     local ew = e.F2T_EXCHANGE_WALKER

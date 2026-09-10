@@ -423,13 +423,6 @@ function EW.ui.registerMuxContent()
 end
 
 function EW.ui.placeDefault()
-  for target in pairs(EW.ui.instances) do
-    if target._activeContent == EW.ui.content_id
-        and (not EW.ui.instanceHealthy or EW.ui.instanceHealthy(target)) then
-      if EW.ui.refreshMounted then EW.ui.refreshMounted(target, true) end
-      return true, "already-placed"
-    end
-  end
   if not EW.ui.registered then
     local registered, reason = EW.ui.registerMuxContent()
     if not registered then return false, reason end

@@ -74,17 +74,6 @@ local function place(content_id, first, last)
         end
         return true, existing_tab.pane and existing_tab.pane.id, "existing-tab"
     end
-    if host and type(host.addTab) == "function" then
-        local tab = host:addTab("Exchange Walker")
-        if not tab then return false, "Muxlet could not create the Exchange Walker tab" end
-        tab.rules = tab.rules or {}
-        tab.rules[#tab.rules + 1] = { id = "ew_founder", enabled = true,
-            cond = { ref = "ExchangeWalkerFounder" }, act = "mux.showSelf", actElse = "mux.hideSelf" }
-        if not ensure_applied(ew, tab, content_id) then
-            return false, "Muxlet did not build the new Exchange Walker tab"
-        end
-        return true, host.id, "added-tab"
-    end
     -- Existing placement wins, even outside the preferred range. Do not switch
     -- tabs, move windows, or replace the map/Galaxy/another package's content.
     for index = 1, 99 do
@@ -102,6 +91,17 @@ local function place(content_id, first, last)
                 end
             end
         end
+    end
+    if host and type(host.addTab) == "function" then
+        local tab = host:addTab("Exchange Walker")
+        if not tab then return false, "Muxlet could not create the Exchange Walker tab" end
+        tab.rules = tab.rules or {}
+        tab.rules[#tab.rules + 1] = { id = "ew_founder", enabled = true,
+            cond = { ref = "ExchangeWalkerFounder" }, act = "mux.showSelf", actElse = "mux.hideSelf" }
+        if not ensure_applied(ew, tab, content_id) then
+            return false, "Muxlet did not build the new Exchange Walker tab"
+        end
+        return true, host.id, "added-tab"
     end
     for index = first, last do
         local id = "pane_" .. index

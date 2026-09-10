@@ -5,7 +5,7 @@
 Candidate: `f2ce-tools-3.3.0-native-ew11.mpackage`; Walker
 3.4.0-native.7. API 1.2.0-candidate.3 is unchanged.
 
-SHA-256: `5d773d656f46134c8f1fc139a7a4c3c146c933d9967448b9800629e686e015f1`.
+SHA-256: `a0ab2635ba6d0a0f9bdce6ac4ca30d1deff6be320749c614bf4ec71d378f6e7b`.
 
 Live inspection established that Ersella's selected tab was named `Exchange
 Walker` but persisted `_activeContent: fed2_cargo`. The same tab stayed black
@@ -17,7 +17,9 @@ saved tab without revealing that slot.
 The native placement path now recognizes the intended named tab, replaces its
 stale content binding with `exchange_walker_live`, verifies the complete board,
 and reveals both Mux layers when that tab is active. It reuses the existing
-Who/Events/Exchange host rather than creating another tab or pane.
+Who/Events/Exchange host rather than creating another tab or pane. The named
+tab remains the repair target even when a temporary direct-pane Walker mount
+also exists, matching the live diagnostic workaround.
 
 The board footer is also reorganized and styled for clearer action hierarchy.
 The formerly ambiguous `Planet` field is now `Inspect`: Enter/Refresh performs
@@ -26,8 +28,8 @@ settings without applying them. Tooltips explain each action, state and schedule
 remain separate from the operational message, and Unicode comparison text that
 rendered incorrectly in Mudlet was replaced with ASCII-safe wording.
 
-Source and exact-package runs pass all 79 native groups: API 23, adapter 5,
-Walker 28, startup 7, topology 8, map lifecycle 1, and Galaxy lifecycle 7.
+Source and exact-package runs pass all 80 native groups: API 23, adapter 5,
+Walker 29, startup 7, topology 8, map lifecycle 1, and Galaxy lifecycle 7.
 All 250 Lua checks, 32 metadata checks, and 221 compiled-script/source matches
 pass. No profile was modified and no package was installed, pushed, or
 released.
