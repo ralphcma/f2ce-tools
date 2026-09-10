@@ -16,7 +16,7 @@ if type(previous) == "table" and type(previous.shutdown) == "function" then prev
 local EW = { NATIVE = true }
 F2T_EXCHANGE_WALKER = EW
 
-EW.VERSION = "3.4.0-native.6"
+EW.VERSION = "3.4.0-native.7"
 EW.API_CONTRACT = "ExchangeWalkerLive/1.0"
 EW.MIN_F2CE_VERSION = "3.3.0"
 EW.enabled = false
@@ -276,16 +276,16 @@ local function update_ui()
   local auto_text = EW.scheduler.enabled and (EW.scheduler.running and "AUTO RUNNING" or "AUTO WAITING") or "AUTO OFF"
   for _, instance in pairs(EW.ui.instances) do
     local controls = instance.controls
-    if controls and controls.status and type(controls.status.echo) == "function" then
+    if not instance.table_id and controls and controls.status and type(controls.status.echo) == "function" then
       pcall(controls.status.echo, controls.status,
         string.format("<center>Exchange Walker %s | %s | %s | %s</center>",
           state, activity, auto_text, plan_text))
     end
-    if controls and controls.toggle and type(controls.toggle.echo) == "function" then
+    if not instance.table_id and controls and controls.toggle and type(controls.toggle.echo) == "function" then
       pcall(controls.toggle.echo, controls.toggle,
         string.format("<center>%s</center>", EW.enabled and "OFF" or "ON"))
     end
-    if controls and controls.auto and type(controls.auto.echo) == "function" then
+    if not instance.table_id and controls and controls.auto and type(controls.auto.echo) == "function" then
       pcall(controls.auto.echo, controls.auto,
         string.format("<center>%s</center>", EW.scheduler.enabled and "AUTO OFF" or "AUTO ON"))
     end

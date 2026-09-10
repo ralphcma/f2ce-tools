@@ -70,7 +70,7 @@ local function environment(options)
             self.text, self.echo_color = text, color or self.echo_color
         end
         function w:cecho(text) self.history[#self.history + 1] = text end
-        function w:setStyleSheet() end
+        function w:setStyleSheet(css) self.css = css end
         function w:setClickCallback(fn) self.click = fn end
         function w:setToolTip(text) self.tooltip = text end
         function w:get_width() return tonumber(self.spec.width) or 800 end
@@ -148,6 +148,11 @@ local function environment(options)
             end
             for _, name in ipairs({ "who", "events", "exchange" }) do
                 pane:addTab(name)._activeContent = "fed2_" .. name
+            end
+            if options.staleNamedTab then
+                local stale = pane:addTab("stale-exchange-walker")
+                stale.name = "Exchange Walker"
+                stale._activeContent = "fed2_cargo"
             end
             mux.panes.pane_2 = pane
         end
@@ -513,9 +518,12 @@ function tests.board_fills_narrow_and_resized_panes_without_color_errors()
     for _, message in ipairs(e.messages) do assert(not message:find("Mux content failed", 1, true), message) end
     eq(instance.input:getText(), "Tempest"); eq(#e.sent, 0)
     assert(instance.empty.text:find("No exchange loaded", 1, true))
-    assert(instance.status.text:find("OFF | AUTO OFF | 0 targets | 30m", 1, true))
-    assert(instance.controls.toggle.text:find("ON", 1, true))
+    assert(instance.status.text:find("OFF | AUTO OFF | 0 targets | every 30m", 1, true))
+    assert(instance.controls.toggle.text:find("TURN ON", 1, true))
     assert(instance.controls.auto.text:find("AUTO ON", 1, true))
+    assert(instance.planet_label.text:find("Inspect", 1, true))
+    assert(instance.input.tooltip:find("read%-only"))
+    assert(instance.controls.refresh.css:find("#234f82", 1, true))
     eq(instance.background.echo_color, "nocolor", "board labels bypass Geyser color parsing")
     for _, size in ipairs({{417,828},{643,450},{1000,1000},{417,828}}) do
         target.content:resize(size[1], size[2]); ew.ui.resizeTable(target); ew.ui.updateTable()
@@ -581,11 +589,24 @@ function tests.active_existing_tab_repairs_hidden_content_slot()
     local ew = e.F2T_EXCHANGE_WALKER
     local target = e.Mux.panes.pane_2._tabs[4]
     target.pane._activeTabId = target.id
+    target.content.hidden = true
     target._contentSlot = e.widgets.__missing or { hidden=true, show=function(self) self.hidden=false end }
     local placed = ew.ui.placeRegisteredContent(
         ew.ui.content_id, ew.ui.preferred_pane_start, ew.ui.preferred_pane_end)
-    assert(placed); eq(target._contentSlot.hidden, false, "active tab content slot is revealed")
+    assert(placed); eq(target.content.hidden, false, "active tab container is revealed")
+    eq(target._contentSlot.hidden, false, "active tab content slot is revealed")
     assert(ew.ui.instanceHealthy(target))
+end
+
+function tests.stale_named_exchange_walker_tab_is_rebound_to_native_content()
+    local e = environment({tabHost=true, staleNamedTab=true}); e.advance(0.25)
+    local ew = e.F2T_EXCHANGE_WALKER
+    local pane = e.Mux.panes.pane_2
+    eq(#pane._tabs, 4, "the stale named tab is reused instead of adding a duplicate")
+    local target = pane._tabs[4]
+    eq(target.name, "Exchange Walker")
+    eq(target._activeContent, ew.ui.content_id, "stale cargo binding is replaced")
+    assert(ew.ui.instanceHealthy(target), "rebound tab contains a complete Walker board")
 end
 
 function tests.existing_tab_is_rebuilt_after_hot_reload_widget_teardown()

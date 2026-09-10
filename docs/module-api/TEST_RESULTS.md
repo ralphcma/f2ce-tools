@@ -1,5 +1,37 @@
 # Module API verification
 
+## 2026-09-10 Exchange Walker stale-tab recovery and board polish
+
+Candidate: `f2ce-tools-3.3.0-native-ew11.mpackage`; Walker
+3.4.0-native.7. API 1.2.0-candidate.3 is unchanged.
+
+SHA-256: `5d773d656f46134c8f1fc139a7a4c3c146c933d9967448b9800629e686e015f1`.
+
+Live inspection established that Ersella's selected tab was named `Exchange
+Walker` but persisted `_activeContent: fed2_cargo`. The same tab stayed black
+with other content while Walker rendered in a newly created pane. Muxlet 2.3.2
+restores tab content while the tab is hidden, can leave both the tab container
+and its framework-owned content slot explicitly hidden, and later activates the
+saved tab without revealing that slot.
+
+The native placement path now recognizes the intended named tab, replaces its
+stale content binding with `exchange_walker_live`, verifies the complete board,
+and reveals both Mux layers when that tab is active. It reuses the existing
+Who/Events/Exchange host rather than creating another tab or pane.
+
+The board footer is also reorganized and styled for clearer action hierarchy.
+The formerly ambiguous `Planet` field is now `Inspect`: Enter/Refresh performs
+a one-off read-only remote exchange capture, while Preview calculates proposed
+settings without applying them. Tooltips explain each action, state and schedule
+remain separate from the operational message, and Unicode comparison text that
+rendered incorrectly in Mudlet was replaced with ASCII-safe wording.
+
+Source and exact-package runs pass all 79 native groups: API 23, adapter 5,
+Walker 28, startup 7, topology 8, map lifecycle 1, and Galaxy lifecycle 7.
+All 250 Lua checks, 32 metadata checks, and 221 compiled-script/source matches
+pass. No profile was modified and no package was installed, pushed, or
+released.
+
 ## 2026-09-10 Exchange Walker saved-tab mount recovery
 
 Candidate: `f2ce-tools-3.3.0-native-ew10.mpackage`; Walker

@@ -111,7 +111,7 @@ for _, column in ipairs(columns) do
         -- color can never abort the entire Mux content apply.
         cell:echo(string.format("<div align='%s' style='white-space:nowrap;font-family:Consolas,monospace;font-size:%dpt;color:%s;'>%s</div>",
             key == "name" and "left" or "right", font, color, escape(text)), "nocolor")
-        cell:setToolTip(changed and string.format("%s: observed %s → proposed %s. Apply requires an explicit reviewed plan.", row.name, tostring(value), tostring(proposed)) or tostring(value))
+        cell:setToolTip(changed and string.format("%s: observed %s -> proposed %s. Apply requires an explicit reviewed plan.", row.name, tostring(value), tostring(proposed)) or tostring(value))
         cell:setClickCallback(function() end) -- informational cells never trade
     end
 end
@@ -172,27 +172,36 @@ local function label(parent, name, x, y, width, height, text, action)
     if action then widget:setClickCallback(action) end
     return widget
 end
+local function set_style(widget, css)
+    if widget and type(widget.setStyleSheet) == "function" then pcall(widget.setStyleSheet, widget, css) end
+end
+local function button_css(background, border)
+    return "QLabel { background-color:" .. background .. ";color:#f3f6fb;border:1px solid " .. border
+        .. ";border-radius:3px;padding:2px;font-family:Consolas;font-size:9pt;font-weight:bold;}"
+        .. " QLabel:hover { background-color:#33415c;border-color:#91b8ff;color:white;}"
+end
 function EW.ui.resizeTable(target)
     local instance = EW.ui.instances[target]
     if not instance or not instance.table_id then return end
     local pane_width, pane_height = target_dimensions(target)
     local width = math.max(1, pane_width - 17)
-    local footer_y = math.max(44, pane_height - 136)
+    local footer_y = math.max(44, pane_height - 142)
     local function place(widget, x, y, w, h) widget:move(x, y); widget:resize(w, h) end
     place(instance.background, 0, 0, pane_width, pane_height)
     place(instance.title, 0, 0, pane_width, 22)
     place(instance.header, 0, 22, pane_width, 22)
     place(instance.scroll, 0, 44, pane_width, math.max(0, footer_y - 48))
-    place(instance.status, 0, footer_y, pane_width, 40)
+    place(instance.status, 2, footer_y, math.max(1, pane_width - 4), 38)
     local input_end, refresh_end = math.floor(pane_width * 0.60), math.floor(pane_width * 0.80)
-    place(instance.planet_label, 0, footer_y + 40, 44, 28)
-    place(instance.input, 44, footer_y + 40, math.max(1, input_end - 44), 28)
-    place(instance.controls.refresh, input_end, footer_y + 40, refresh_end - input_end, 28)
-    place(instance.controls.preview, refresh_end, footer_y + 40, pane_width - refresh_end, 28)
+    place(instance.planet_label, 2, footer_y + 40, 56, 30)
+    place(instance.input, 60, footer_y + 40, math.max(1, input_end - 62), 30)
+    place(instance.controls.refresh, input_end + 2, footer_y + 40, math.max(1, refresh_end - input_end - 4), 30)
+    place(instance.controls.preview, refresh_end + 2, footer_y + 40, math.max(1, pane_width - refresh_end - 4), 30)
     for index, key in ipairs({ "toggle", "apply", "auto", "cancel", "settings", "clear" }) do
         local col = (index - 1) % 3
         local left, right = math.floor(pane_width * col / 3), math.floor(pane_width * (col + 1) / 3)
-        place(instance.controls[key], left, footer_y + 72 + math.floor((index - 1) / 3) * 32, right - left, 28)
+        place(instance.controls[key], left + 2, footer_y + 74 + math.floor((index - 1) / 3) * 32,
+            math.max(1, right - left - 4), 30)
     end
     place(instance.empty, 8, 12, math.max(1, width - 16), 90)
     instance.body:resize(width, instance.body:get_height())
@@ -210,8 +219,13 @@ function EW.ui.resizeTable(target)
 end
 function EW.ui.refreshMounted(target, settle)
     if not EW.ui.instanceHealthy(target) then return false end
-    if target_is_active(target) and target._contentSlot and type(target._contentSlot.show) == "function" then
-        pcall(target._contentSlot.show, target._contentSlot)
+    if target_is_active(target) then
+        -- Muxlet 2.3.2 can restore a selected tab whose parent and framework
+        -- content slot remain explicitly hidden. Reveal both layers: showing
+        -- only the Walker widgets cannot paint through a hidden tab container.
+        for _, container in ipairs({ target.content, target._contentSlot }) do
+            if container and type(container.show) == "function" then pcall(container.show, container) end
+        end
     end
     return EW.ui.reflowTable(target, settle == true)
 end
@@ -242,11 +256,14 @@ function EW.ui.reflowTable(target, settle)
 end
 local function update_status(instance, message)
     local state = (EW.enabled and "ON" or "OFF") .. " | " .. (EW.scheduler.enabled and "AUTO ON" or "AUTO OFF")
-        .. " | " .. #EW.settings.targets .. " targets | " .. EW.settings.interval_minutes .. "m"
+        .. " | " .. #EW.settings.targets .. " targets | every " .. EW.settings.interval_minutes .. "m"
     -- Keep the footer compact; the complete diagnostic is available on hover.
     local limit = math.max(20, math.floor(instance.status:get_width() / 6.5))
     local detail = #message > limit and message:sub(1, limit - 3) .. "..." or message
-    instance.status:echo("<div style='font-size:8pt;'>" .. escape(state) .. "<br>" .. escape(detail) .. "</div>")
+    local state_color = EW.enabled and "#65dd75" or "#ff8b8b"
+    instance.status:echo("<div style='font-family:Consolas;font-size:8pt;padding:2px 5px;'>"
+        .. "<span style='color:" .. state_color .. ";font-weight:bold;'>" .. escape(state) .. "</span><br>"
+        .. "<span style='color:#aeb8cc;'>" .. escape(detail) .. "</span></div>")
     instance.status:setToolTip(message .. "\nTargets: " .. (#EW.settings.targets > 0 and table.concat(EW.settings.targets, ", ") or "none; set these in Settings"))
 end
 function EW.ui.updateTable()
@@ -255,13 +272,17 @@ function EW.ui.updateTable()
             local rank = EW.rankAllowed()
             instance.title:echo(escape(rank and ((board.planet or "Exchange Walker") .. " | " .. (board.captured_at and os.date("%H:%M:%S", board.captured_at) or "no capture")) or "Founder rank required"))
             local message = EW.plan and EW.plan.planet == board.planet and not EW.plan.applied
-                and (#EW.plan.actions .. " reviewed changes. Cyan cells: hover to compare observed → proposed.") or board.message
+                and ("Preview ready: " .. #EW.plan.actions .. " changes. Cyan cells show observed vs proposed values.") or board.message
             update_status(instance, message)
+            instance.controls.toggle:echo("<center><b>" .. (EW.enabled and "TURN OFF" or "TURN ON") .. "</b></center>", "nocolor")
+            instance.controls.auto:echo("<center><b>" .. (EW.scheduler.enabled and "AUTO OFF" or "AUTO ON") .. "</b></center>", "nocolor")
+            set_style(instance.controls.toggle, button_css(EW.enabled and "#7f1d2d" or "#17613a", EW.enabled and "#e06070" or "#4cc77c"))
+            set_style(instance.controls.auto, button_css(EW.scheduler.enabled and "#7f1d2d" or "#285d70", EW.scheduler.enabled and "#e06070" or "#58b9d1"))
             if instance.input:getText() == "" and EW.settings.targets[1] then instance.input:print(EW.settings.targets[1]) end
             f2tTableSetData(instance.table_id, rank and copy(board.rows) or {})
             if not rank or #board.rows == 0 then
                 instance.empty:echo(not rank and "Founder rank or higher is required." or board.captured_at
-                    and "This exchange returned no commodities." or "<b>No exchange loaded</b><br>Choose a planet below and click Refresh.<br>Read-only — works while OFF.<br>Scheduled planets are saved separately in Settings.")
+                    and "This exchange returned no commodities." or "<b>No exchange loaded</b><br>Type a planet below, then choose Refresh to inspect or Preview to plan.<br>Automation targets and schedules are configured in Settings.")
                 instance.empty:show()
             else instance.empty:hide() end
             if Mux.reassertHidden then Mux.reassertHidden(target.content) end
@@ -277,7 +298,9 @@ function EW.ui.buildTable(target)
     EW.ui.instances[target] = instance
     EW.ui.registered_target = target
     instance.background = label(target.content, id .. "background", 0, 0, "100%", "100%", "")
+    set_style(instance.background, "background-color:#0d111b;border:none;")
     instance.title = label(target.content, id .. "title", 0, 0, "100%", 22, "Exchange Walker")
+    set_style(instance.title, "background-color:#131a29;color:#eef4ff;border:none;border-bottom:1px solid #40506d;padding:2px 6px;font-family:Consolas;font-size:9pt;font-weight:bold;")
     instance.header = label(target.content, id .. "header", 0, 22, "100%", 22, "")
     instance.scroll = Geyser.ScrollBox:new({ name = id .. "scroll", x = 0, y = 44, width = "100%", height = "100%-140px" }, target.content)
     instance.body = label(instance.scroll, id .. "body", 0, 0, "100%", 1000, "")
@@ -295,8 +318,13 @@ function EW.ui.buildTable(target)
     end
     f2tTableSetColHdrs(id, header_map)
     instance.status = label(target.content, id .. "status", 0, "100%-94px", "100%", 22, "")
-    instance.planet_label = label(target.content, id .. "planet_label", 0, 0, 44, 28, "Planet")
+    set_style(instance.status, "background-color:#111827;color:#aeb8cc;border:1px solid #33415c;border-radius:3px;")
+    instance.planet_label = label(target.content, id .. "planet_label", 0, 0, 56, 30, "<center>Inspect</center>")
+    set_style(instance.planet_label, "background-color:#182235;color:#b9c9e6;border:1px solid #3d4d68;border-radius:3px;font-family:Consolas;font-size:8pt;font-weight:bold;")
+    instance.planet_label:setToolTip("One-off planet to inspect. This does not change the scheduled target list.")
     local input = Geyser.CommandLine:new({ name = id .. "planet", x = 0, y = "100%-70px", width = "60%", height = 30 }, target.content)
+    set_style(input, "background-color:#090d16;color:#f0f5ff;border:1px solid #58719a;border-radius:3px;padding:2px 6px;font-family:Consolas;font-size:9pt;")
+    input:setToolTip("Type a planet name. Press Enter or Refresh for a read-only exchange scan; Preview calculates proposed settings without applying them.")
     local current = api() and api().data.get("room")
     local vitals = api() and api().data.get("vitals")
     local owned = current and vitals and current.owner == vitals.name and EW.policy.safePlanet(current.area)
@@ -319,6 +347,17 @@ function EW.ui.buildTable(target)
             else board.rows, board.planet, board.captured_at = {}, nil, nil; board.message = "Choose a planet below and Refresh."; EW.ui.clear(); EW.ui.updateTable() end
         end)
     end
+    local palette = {
+        refresh={"#234f82", "#5c91cf"}, preview={"#503f78", "#8f77c9"}, apply={"#75501f", "#d49a4c"},
+        cancel={"#6f2630", "#cf6572"}, settings={"#39445a", "#70809f"}, clear={"#303849", "#65728b"},
+    }
+    for key, colors in pairs(palette) do set_style(instance.controls[key], button_css(colors[1], colors[2])) end
+    instance.controls.refresh:setToolTip("Read-only: capture and display the selected planet's remote exchange.")
+    instance.controls.preview:setToolTip("Calculate proposed spread and stock changes for the selected planet. Sends no setting commands.")
+    instance.controls.apply:setToolTip("Apply the current reviewed and unexpired preview plan.")
+    instance.controls.cancel:setToolTip("Cancel the current capture or discard unsent planned actions.")
+    instance.controls.settings:setToolTip("Open Exchange Walker targets, schedule, spreads, reserves, and commodity exclusions.")
+    instance.controls.clear:setToolTip("Clear the displayed exchange table and preview from this board.")
     -- Keep operational messages in one status line, not mixed into data rows.
     instance.console = { cecho = function(_, text)
         board.message = tostring(text):gsub("<[^>]+>", ""):gsub("\n", " "); update_status(instance, board.message)

@@ -27,27 +27,40 @@ local function place(content_id, first, last)
         return false, "Mux safe placement capability is unavailable"
     end
     local eligible = ew.rankAllowed and ew.rankAllowed()
-    local host, existing_tab
+    local host, existing_tab, named_tab
     for index = 1, 99 do
         local pane = Mux.getPane("pane_" .. index)
         if pane then
-            local who, exchange = false, false
+            local who, exchange, pane_named_tab = false, false, nil
             for _, tabs in ipairs({ pane._tabs or {}, pane._hiddenTabs or {} }) do
                 for _, tab in ipairs(tabs) do
                     who = who or tab._activeContent == "fed2_who"
                     exchange = exchange or tab._activeContent == "fed2_exchange"
+                    local tab_name = tostring(tab.name or tab.id or "")
+                    if tab_name == "Exchange Walker" then pane_named_tab = pane_named_tab or tab end
                     if tab._activeContent == content_id then
                         existing_tab = existing_tab or tab
                         if Mux.runAction then Mux.runAction(eligible and "mux.showSelf" or "mux.hideSelf", { tab = tab, pane = pane }) end
                     end
                 end
             end
-            if who and exchange then host = host or pane end
+            if who and exchange then
+                host = host or pane
+                named_tab = named_tab or pane_named_tab
+                if pane_named_tab and Mux.runAction then
+                    Mux.runAction(eligible and "mux.showSelf" or "mux.hideSelf", { tab = pane_named_tab, pane = pane })
+                end
+            end
             if not eligible and pane._activeContent == content_id and Mux.runAction then
                 Mux.runAction("mux.hideSelf", { pane = pane })
             end
         end
     end
+    -- Older workspace saves can retain a tab named Exchange Walker while its
+    -- content ID points at another F2CE view (observed live as `fed2_cargo`).
+    -- Prefer and repair that intended tab instead of silently mounting Walker
+    -- in a different pane and leaving the selected named tab black.
+    existing_tab = named_tab or existing_tab
     if not eligible then return false, "Founder rank or higher is required" end
     if existing_tab then
         -- A package/script reload destroys the prior Walker's Geyser widgets,
