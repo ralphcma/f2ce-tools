@@ -6,17 +6,17 @@ local fields = {
     { "interval_minutes", "ew_general", "Review interval (minutes)", 5, 1440 },
     { "targets", "ew_general", "Owned exchange targets (comma-separated)" },
     { "excluded_commodities", "ew_general", "Excluded commodities (comma-separated)" },
-    { "deficit_spread", "ew_deficit", "Deficit spread (%)", 6, 40 },
-    { "deficit_min", "ew_deficit", "Deficit minimum stock", 0, 10000 },
-    { "deficit_max", "ew_deficit", "Deficit maximum stock", 0, 20000 },
-    { "breakeven_spread", "ew_breakeven", "Breakeven spread (%)", 6, 40 },
-    { "breakeven_min", "ew_breakeven", "Breakeven minimum stock", 0, 10000 },
-    { "breakeven_max", "ew_breakeven", "Breakeven maximum stock", 0, 20000 },
-    { "surplus_spread", "ew_surplus", "Surplus spread (%)", 6, 40 },
-    { "growth_buffer", "ew_surplus", "Surplus stock growth buffer", 0, 10000 },
-    { "reserve_trigger", "ew_reserve", "Switch to reserve policy at stock", 0, 10000 },
-    { "reserve_min", "ew_reserve", "Reserve minimum stock", 0, 10000 },
-    { "reserve_max", "ew_reserve", "Reserve maximum stock", 0, 20000 },
+    { "deficit_spread", "ew_deficit", "Deficit spread (6-40%)", 6, 40 },
+    { "deficit_min", "ew_deficit", "Deficit minimum stock (0-10,000)", 0, 10000 },
+    { "deficit_max", "ew_deficit", "Deficit maximum stock (0-20,000)", 0, 20000 },
+    { "breakeven_spread", "ew_breakeven", "Breakeven spread (6-40%)", 6, 40 },
+    { "breakeven_min", "ew_breakeven", "Breakeven minimum stock (0-10,000)", 0, 10000 },
+    { "breakeven_max", "ew_breakeven", "Breakeven maximum stock (0-20,000)", 0, 20000 },
+    { "surplus_spread", "ew_surplus", "Surplus spread (6-40%)", 6, 40 },
+    { "growth_buffer", "ew_surplus", "Surplus stock growth buffer (0-10,000)", 0, 10000 },
+    { "reserve_trigger", "ew_reserve", "Switch to reserve policy at stock (0-10,000)", 0, 10000 },
+    { "reserve_min", "ew_reserve", "Reserve minimum stock (0-10,000)", 0, 10000 },
+    { "reserve_max", "ew_reserve", "Reserve maximum stock (0-20,000)", 0, 20000 },
 }
 local defaults, by_key = {}, {}
 local writing, loaded = false, false
@@ -85,6 +85,12 @@ for _, field in ipairs(fields) do
             and "Default 30 minutes. Saving a preference never arms scheduled automation. Use AUTO ON explicitly."
             or key == "targets"
                 and "Comma-separated planet names, e.g. Tempest, Amsterdam, Holland, Denmark. Click Apply beside this field to save for this profile. Saving stops the timer; use AUTO ON explicitly."
+            or key:find("spread", 1, true)
+                and "Game range: 6-40%. Saved per profile; changes invalidate previews and stop the running timer."
+            or key:find("_min", 1, true)
+                and "Game range: 0-10,000 tons. The minimum must not exceed its corresponding maximum."
+            or key:find("_max", 1, true)
+                and "Game range: 0-20,000 tons. The maximum must not be below its corresponding minimum."
             or "Saved per profile. Changes invalidate previews and stop the running timer. Limits are in tons.",
         validator = function(value)
             local decoded, why = decode(key, value)

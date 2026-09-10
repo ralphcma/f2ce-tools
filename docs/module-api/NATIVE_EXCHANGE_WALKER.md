@@ -141,6 +141,13 @@ complete. Selected replacement tabs are activated before content construction;
 active refresh/resize clears both visibility flags; and every reflow explicitly
 lowers the background and raises the foreground layers in their intended order.
 
+Candidate `native-ew16` makes the table schema visible after that same Muxlet
+reveal lifecycle. Its seven sortable headings are direct content-slot children,
+not children of a decorative Geyser Label, so Mudlet 5.0.1 cannot strand them
+behind a nested-label visibility boundary. Settings also display and enforce
+the server ranges consistently: spreads 6-40%, minimum stock 0-10,000 tons,
+and maximum stock 0-20,000 tons, with minimum never above maximum.
+
 **Refresh is read-only and works while OFF**. It does not make an applicable
 plan or authorize writes. Incomplete or wrong-planet responses retain the last
 valid table with an error. Preview still requires ON, captures production too,

@@ -269,14 +269,33 @@ function tests.defaults_and_late_mux()
         assert(e.Mux.settings.get(field[2], field[1]) ~= nil, field[1] .. " is blank")
         assert(type(e.Mux.settings._registry[field[2]][field[1]].validator) == "function")
     end
+    local deficit_spread = e.Mux.settings._registry.ew_deficit.deficit_spread
+    local deficit_min = e.Mux.settings._registry.ew_deficit.deficit_min
+    local deficit_max = e.Mux.settings._registry.ew_deficit.deficit_max
+    eq(deficit_spread.min, 6); eq(deficit_spread.max, 40)
+    eq(deficit_min.min, 0); eq(deficit_min.max, 10000)
+    eq(deficit_max.min, 0); eq(deficit_max.max, 20000)
+    assert(deficit_spread.label:find("6-40%", 1, true))
+    assert(deficit_min.label:find("10,000", 1, true)); assert(deficit_max.label:find("20,000", 1, true))
     eq(ew.settings.interval_minutes, 30); eq(ew.settings.reserve_min, 10000); eq(ew.settings.reserve_max, 20000)
     eq(ew.settings.surplus_spread, 40); eq(ew.settings.deficit_spread, 6); eq(#e.sent, 0)
     ew.settings.open(); assert(e.Mux._settings_ui.visible); eq(e.Mux.settings.shown, "ew_general")
 end
 function tests.policy_validation_and_invalidation()
     local e = environment(); local ew = sample(e)
+    assert(not ew.settings.configure({ deficit_spread = 5 }))
+    assert(not ew.settings.configure({ breakeven_spread = 41 }))
+    assert(not ew.settings.configure({ surplus_spread = 5 }))
+    assert(not ew.settings.configure({ deficit_min = 10001 }))
+    assert(not ew.settings.configure({ breakeven_max = 20001 }))
+    assert(not ew.settings.configure({ reserve_min = 10001 }))
+    assert(not ew.settings.configure({ reserve_max = 20001 }))
     assert(not ew.settings.configure({ deficit_min = 3000, deficit_max = 1000 }))
     assert(ew.plan, "invalid input must not change the current plan")
+    assert(ew.settings.configure({ deficit_spread = 6, breakeven_spread = 40,
+        surplus_spread = 40, deficit_min = 10000, deficit_max = 20000,
+        breakeven_min = 10000, breakeven_max = 20000,
+        reserve_min = 10000, reserve_max = 20000 }, false))
     assert(ew.settings.configure({ deficit_min = 3000, deficit_max = 5000 }))
     eq(ew.plan, nil); eq(ew.settings.deficit_min, 3000)
     assert(not e.Mux.settings.set("ew_deficit", "deficit_max", 2000))
@@ -538,6 +557,12 @@ function tests.board_refresh_is_read_only_validated_and_cancelable()
     local pane = e.Mux.panes.pane_2; local instance = ew.ui.instances[pane._tabs[4]]
     for _, control in pairs(instance.controls) do assert(control.spec.y >= instance.status.spec.y + 40) end
     eq(#instance.headers, 7); eq(#ew.ui.boardColumns, 7)
+    for index, expected in ipairs({ "Commodity", "Spread", "Current", "Min", "Max", "Efficiency", "Net" }) do
+        eq(instance.headers[index].parent, pane._tabs[4].content,
+            "header must be mounted directly in the visible content slot")
+        assert(instance.headers[index].text:find(expected, 1, true), expected .. " header is missing")
+        eq(instance.headers[index].spec.y, 22)
+    end
     assert(ew.inspect("Tempest")); eq(ew.enabled, false); eq(e.sent[1], "display exchange Tempest")
     e.finishCapture("exchange", "Tempest", {
         "AntiMatter: value 100ig/ton Spread: 40% Stock: current 20000/min 10000/max 20000 Efficiency: 275% Net: 24",
@@ -592,8 +617,9 @@ function tests.board_fills_narrow_and_resized_panes_without_color_errors()
         local width = 0
         for _, header in ipairs(instance.headers) do eq(header.spec.x, width); width = width + header:get_width() end
         eq(width, size[1]-17)
-        eq(instance.columns[2].label, size[1] < 717 and "Spr%" or "Spread")
-        eq(instance.columns[6].label, size[1] < 717 and "Eff%" or "Efficiency")
+        eq(instance.columns[2].label, "Spread")
+        eq(instance.columns[3].label, "Current")
+        eq(instance.columns[6].label, size[1] < 717 and "Eff.%" or "Efficiency")
     end
     assert(ew.inspect("Tempest"))
     e.finishCapture("exchange", "Tempest", {

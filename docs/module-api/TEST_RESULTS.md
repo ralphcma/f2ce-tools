@@ -1,5 +1,31 @@
 # Module API verification
 
+## 2026-09-10 Exchange Walker column headings and policy bounds
+
+Candidate: `f2ce-tools-3.3.0-native-ew16.mpackage`; Walker
+3.4.0-native.12. API 1.2.0-candidate.3 is unchanged.
+
+SHA-256: `d0f2d4aebe128f85e46ecfcd12769b3fbcd5a8dd15bcf5d62a8cafaaaf9fbc44`.
+
+The data board now mounts its seven sortable headings directly in the Muxlet
+content slot instead of nesting them inside a decorative Geyser Label. This
+keeps Commodity, Spread, Current, Min, Max, Efficiency, and Net visible after
+the saved tab's hidden/reveal paint cycle. Narrow panes retain explicit Spread
+and Current labels and use only `Eff.%` as the compact heading.
+
+Settings labels now state the game ranges. Deficit, breakeven, and surplus
+spreads accept only 6-40%; every configured minimum accepts 0-10,000 tons; and
+every configured maximum accepts 0-20,000 tons. Muxlet field metadata and the
+whole-policy runtime validator enforce the same boundaries, including the
+existing minimum-not-above-maximum rule. Boundary and rejection cases are
+covered by the offline suite.
+
+Source and exact-package verification pass all 81 native groups: API 23,
+adapter 5, Walker 30, startup 7, topology 8, map lifecycle 1, and Galaxy
+lifecycle 7. All 250 Lua checks, 32 metadata checks, and 221 packaged-script
+comparisons pass. No profile was modified and no package was installed, pushed,
+or released.
+
 ## 2026-09-10 Exchange Walker tab paint-order recovery
 
 Candidate: `f2ce-tools-3.3.0-native-ew15.mpackage`; Walker

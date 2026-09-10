@@ -82,11 +82,11 @@ end
 
 local columns = {
     { key = "name", label = "Commodity", scrollbox_pct = 28, default_sort = "asc" },
-    { key = "spread", label = "Spread", compact = "Spr%", scrollbox_pct = 9.5 },
-    { key = "stock_current", label = "Current", compact = "Stock", scrollbox_pct = 12.5 },
+    { key = "spread", label = "Spread", scrollbox_pct = 9.5 },
+    { key = "stock_current", label = "Current", scrollbox_pct = 12.5 },
     { key = "stock_min", label = "Min", scrollbox_pct = 12.5 },
     { key = "stock_max", label = "Max", scrollbox_pct = 12.5 },
-    { key = "efficiency", label = "Efficiency", compact = "Eff%", scrollbox_pct = 12 },
+    { key = "efficiency", label = "Efficiency", compact = "Eff.%", scrollbox_pct = 12 },
     { key = "net", label = "Net", scrollbox_pct = 13 },
 }
 local function proposal(row, key)
@@ -181,9 +181,18 @@ local function restore_paint_order(instance)
     if instance.background and type(instance.background.lower) == "function" then
         pcall(instance.background.lower, instance.background)
     end
-    local foreground = { instance.title, instance.header, instance.scroll,
-        instance.status, instance.planet_label, instance.input }
+    local foreground = { instance.title, instance.header }
     for _, widget in ipairs(foreground) do
+        if widget and type(widget.raise) == "function" then pcall(widget.raise, widget) end
+    end
+    -- Column headings are direct children of the Mux content slot. Keeping
+    -- them out of the decorative header Label avoids the Mudlet 5.0.1 nested
+    -- Label visibility bug that can leave an otherwise populated table with
+    -- no headings after a hidden tab is revealed.
+    for _, widget in ipairs(instance.headers or {}) do
+        if widget and type(widget.raise) == "function" then pcall(widget.raise, widget) end
+    end
+    for _, widget in ipairs({ instance.scroll, instance.status, instance.planet_label, instance.input }) do
         if widget and type(widget.raise) == "function" then pcall(widget.raise, widget) end
     end
     for _, key in ipairs({ "refresh", "preview", "toggle", "apply", "auto", "cancel", "settings", "clear" }) do
@@ -264,7 +273,7 @@ function EW.ui.resizeTable(target)
         column.header_css = "background-color:transparent;border:none;padding:0 2px;color:#d8d8d8;font-family:Consolas;font-size:" .. column.font_pt .. "pt;"
         column.header_active_css = column.header_css .. "color:#65dd75;"
         local cell_width = index == #instance.columns and width - x or math.floor(width * column.scrollbox_pct / 100)
-        instance.headers[index]:move(x, 0); instance.headers[index]:resize(cell_width, 22); x = x + cell_width
+        instance.headers[index]:move(x, 22); instance.headers[index]:resize(cell_width, 22); x = x + cell_width
     end
     f2tTableOnResize(instance.table_id, width)
 end
@@ -356,7 +365,7 @@ function EW.ui.buildTable(target)
     local header_map = {}
     for index, column in ipairs(columns) do
         local key = column.key
-        local header = label(instance.header, id .. "col" .. index, 0, 0, 1, 22, column.label,
+        local header = label(target.content, id .. "col" .. index, 0, 22, 1, 22, column.label,
             function() f2tTableToggleSort(id, key) end)
         set_tooltip(header, "Sort by " .. column.label)
         instance.headers[index], header_map[key] = header, header
