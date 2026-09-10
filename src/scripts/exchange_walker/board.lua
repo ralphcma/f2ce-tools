@@ -116,6 +116,52 @@ for _, column in ipairs(columns) do
     end
 end
 EW.ui.boardColumns = columns
+local required_widgets = { "background", "title", "header", "scroll", "body", "empty",
+    "status", "input", "planet_label" }
+local required_controls = { "refresh", "preview", "toggle", "apply", "auto", "cancel", "settings", "clear" }
+local function live_widget(widget)
+    return type(widget) == "table" and widget.deleted ~= true
+end
+function EW.ui.instanceHealthy(target)
+    local instance = EW.ui.instances[target]
+    if type(instance) ~= "table" or not instance.table_id then return false end
+    for _, key in ipairs(required_widgets) do
+        if not live_widget(instance[key]) then return false end
+    end
+    if type(instance.headers) ~= "table" or #instance.headers ~= #columns
+        or type(instance.controls) ~= "table" then return false end
+    for _, key in ipairs(required_controls) do
+        if not live_widget(instance.controls[key]) then return false end
+    end
+    return true
+end
+local function target_dimensions(target)
+    local content = target and target.content
+    local width = content and tonumber(content:get_width()) or 0
+    local height = content and tonumber(content:get_height()) or 0
+    -- Muxlet restores every saved tab before activating the selected one. An
+    -- inactive tab can therefore report 0x0 even though its host viewport has
+    -- final geometry. Build against that viewport so the first reveal is not a
+    -- correctly registered but visually empty black surface.
+    local host = target and target.pane
+    local viewport = host and (host._tabViewport or host.content)
+    if viewport then
+        if width <= 1 then width = tonumber(viewport:get_width()) or width end
+        if height <= 1 then height = tonumber(viewport:get_height()) or height end
+    end
+    return math.max(1, width), math.max(1, height)
+end
+local function target_is_active(target)
+    local current = target
+    while current do
+        if current._conditionHidden then return false end
+        local host = current.pane
+        if not host then return true end
+        if host._activeTabId ~= current.id then return false end
+        current = host
+    end
+    return true
+end
 local function label(parent, name, x, y, width, height, text, action)
     local widget = Geyser.Label:new({ name = name, x = x, y = y, width = width, height = height, fgColor = "#d8d8d8" }, parent)
     widget:setStyleSheet("background-color:#171b29;color:#ddd;border:1px solid #353c50;font-family:Consolas;font-size:9pt;")
@@ -129,7 +175,7 @@ end
 function EW.ui.resizeTable(target)
     local instance = EW.ui.instances[target]
     if not instance or not instance.table_id then return end
-    local pane_width, pane_height = math.max(1, target.content:get_width()), math.max(1, target.content:get_height())
+    local pane_width, pane_height = target_dimensions(target)
     local width = math.max(1, pane_width - 17)
     local footer_y = math.max(44, pane_height - 136)
     local function place(widget, x, y, w, h) widget:move(x, y); widget:resize(w, h) end
@@ -161,6 +207,13 @@ function EW.ui.resizeTable(target)
         instance.headers[index]:move(x, 0); instance.headers[index]:resize(cell_width, 22); x = x + cell_width
     end
     f2tTableOnResize(instance.table_id, width)
+end
+function EW.ui.refreshMounted(target, settle)
+    if not EW.ui.instanceHealthy(target) then return false end
+    if target_is_active(target) and target._contentSlot and type(target._contentSlot.show) == "function" then
+        pcall(target._contentSlot.show, target._contentSlot)
+    end
+    return EW.ui.reflowTable(target, settle == true)
 end
 function EW.ui.reflowTable(target, settle)
     local instance = EW.ui.instances[target]

@@ -1,5 +1,31 @@
 # Module API verification
 
+## 2026-09-10 Exchange Walker saved-tab mount recovery
+
+Candidate: `f2ce-tools-3.3.0-native-ew10.mpackage`; Walker
+3.4.0-native.6. API 1.2.0-candidate.3 is unchanged.
+
+SHA-256: `04601c29d2c0a4459c0d14faaeea789fb606c5a0bb858fa4ab34420ea33e2811`.
+
+The remaining black-tab failure was reproduced from the Ersella workspace:
+Muxlet restores every saved tab before activating the selected tab, so an
+inactive Exchange Walker tab can initially report `0x0` content geometry.
+Walker previously built and permanently accepted that effectively invisible
+board. A construction interrupted during hot reload could likewise leave a
+partial instance that later placement attempts mistook for a healthy mount.
+
+Walker now uses the host tab viewport when an inactive tab has no usable
+geometry, validates the complete widget/control tree before accepting any tab
+or pane placement, rebuilds partial instances, reveals an active content slot,
+and reflows after successful recovery. It preserves the saved tab, selected
+workspace, Founder gate, bottom controls, and all map/Galaxy content.
+
+Source and exact-package runs pass all 78 native groups: API 23, adapter 5,
+Walker 27, startup 7, topology 8, map lifecycle 1, and Galaxy lifecycle 7.
+All 250 Lua checks, 32 metadata checks, and 221 compiled-script/source matches
+pass. No profile was modified and no package was installed, pushed, or
+released.
+
 ## 2026-09-09 Exchange Walker hot-update board recovery
 
 Candidate: `f2ce-tools-3.3.0-native-ew9.mpackage`; Walker

@@ -3,6 +3,24 @@
 -- saved layouts keep working; register only through F2CE's normal lifecycle.
 local function walker() return F2T_EXCHANGE_WALKER end
 
+local function instance_healthy(ew, target)
+    if type(ew.ui.instanceHealthy) == "function" then
+        return ew.ui.instanceHealthy(target) == true
+    end
+    return ew.ui.instances[target] ~= nil
+end
+
+local function ensure_applied(ew, target, content_id)
+    if target._activeContent ~= content_id or not instance_healthy(ew, target) then
+        Mux._applyContent(target, content_id, true)
+    end
+    if target._activeContent ~= content_id or not instance_healthy(ew, target) then
+        return false
+    end
+    if ew.ui.refreshMounted then ew.ui.refreshMounted(target, true) end
+    return true
+end
+
 local function place(content_id, first, last)
     local ew = walker()
     if not (ew and Mux and Mux.getPane and Mux._applyContent) then
@@ -38,10 +56,7 @@ local function place(content_id, first, last)
         -- live board instance. Reapply into the existing tab when the instance
         -- is missing; otherwise a hot update leaves a valid-looking, black tab
         -- until the entire Mudlet profile is restarted.
-        if not ew.ui.instances[existing_tab] then
-            Mux._applyContent(existing_tab, content_id, true)
-        end
-        if existing_tab._activeContent ~= content_id or not ew.ui.instances[existing_tab] then
+        if not ensure_applied(ew, existing_tab, content_id) then
             return false, "Muxlet did not rebuild the existing Exchange Walker tab"
         end
         return true, existing_tab.pane and existing_tab.pane.id, "existing-tab"
@@ -52,8 +67,10 @@ local function place(content_id, first, last)
         tab.rules = tab.rules or {}
         tab.rules[#tab.rules + 1] = { id = "ew_founder", enabled = true,
             cond = { ref = "ExchangeWalkerFounder" }, act = "mux.showSelf", actElse = "mux.hideSelf" }
-        Mux._applyContent(tab, content_id, true)
-        return tab._activeContent == content_id, host.id, "added-tab"
+        if not ensure_applied(ew, tab, content_id) then
+            return false, "Muxlet did not build the new Exchange Walker tab"
+        end
+        return true, host.id, "added-tab"
     end
     -- Existing placement wins, even outside the preferred range. Do not switch
     -- tabs, move windows, or replace the map/Galaxy/another package's content.
@@ -61,7 +78,9 @@ local function place(content_id, first, last)
         local pane = Mux.getPane("pane_" .. index)
         if pane then
             if pane._activeContent == content_id then
-                if not ew.ui.instances[pane] then Mux._applyContent(pane, content_id, true) end
+                if not ensure_applied(ew, pane, content_id) then
+                    return false, "Muxlet did not rebuild the existing Exchange Walker pane"
+                end
                 return true, pane.id or ("pane_" .. index), "existing"
             end
             for _, tabs in ipairs({ pane._tabs or {}, pane._hiddenTabs or {} }) do
@@ -76,8 +95,7 @@ local function place(content_id, first, last)
         local pane = Mux.getPane(id)
         if pane and not pane._activeContent and not next(pane._tabs or {})
             and not next(pane._hiddenTabs or {}) then
-            Mux._applyContent(pane, content_id, true)
-            if pane._activeContent == content_id then return true, id, "placed" end
+            if ensure_applied(ew, pane, content_id) then return true, id, "placed" end
             return false, "Muxlet did not confirm content placement"
         end
     end

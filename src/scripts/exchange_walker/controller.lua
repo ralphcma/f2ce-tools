@@ -16,7 +16,7 @@ if type(previous) == "table" and type(previous.shutdown) == "function" then prev
 local EW = { NATIVE = true }
 F2T_EXCHANGE_WALKER = EW
 
-EW.VERSION = "3.4.0-native.5"
+EW.VERSION = "3.4.0-native.6"
 EW.API_CONTRACT = "ExchangeWalkerLive/1.0"
 EW.MIN_F2CE_VERSION = "3.3.0"
 EW.enabled = false
@@ -423,7 +423,13 @@ function EW.ui.registerMuxContent()
 end
 
 function EW.ui.placeDefault()
-  if next(EW.ui.instances) ~= nil then return true, "already-placed" end
+  for target in pairs(EW.ui.instances) do
+    if target._activeContent == EW.ui.content_id
+        and (not EW.ui.instanceHealthy or EW.ui.instanceHealthy(target)) then
+      if EW.ui.refreshMounted then EW.ui.refreshMounted(target, true) end
+      return true, "already-placed"
+    end
+  end
   if not EW.ui.registered then
     local registered, reason = EW.ui.registerMuxContent()
     if not registered then return false, reason end

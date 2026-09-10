@@ -139,7 +139,8 @@ local function environment(options)
             mux.panes["pane_" .. index] = { id = "pane_" .. index, content = widget({}), contentBg = widget({}) }
         end
         if options.tabHost then
-            local pane = { id = "pane_2", _tabs = {}, _hiddenTabs = {}, active = "who" }
+            local pane = { id = "pane_2", _tabs = {}, _hiddenTabs = {}, active = "who", _activeTabId = "who",
+                _tabViewport = widget({ width = 417, height = 828 }) }
             function pane:addTab(name)
                 local geometry = options.zeroSizedTab and { width = 0, height = 0 } or {}
                 local tab = { id = name, pane = self, content = widget(geometry), contentBg = widget({}) }
@@ -544,11 +545,12 @@ function tests.board_fills_narrow_and_resized_panes_without_color_errors()
     assert(instance.status.text:find("&lt;name&gt;", 1, true))
 end
 
-function tests.hidden_zero_sized_tab_reflows_when_revealed()
+function tests.hidden_zero_sized_tab_uses_host_geometry_before_reveal()
     local e = environment({tabHost=true, zeroSizedTab=true}); e.advance(0.25)
     local ew = e.F2T_EXCHANGE_WALKER; local target = e.Mux.panes.pane_2._tabs[4]
     local instance = assert(ew.ui.instances[target])
-    eq(instance.background:get_width(), 1, "hidden zero-width tab builds safely")
+    eq(instance.background:get_width(), 417, "hidden tab uses its host viewport width")
+    eq(instance.background:get_height(), 828, "hidden tab uses its host viewport height")
     target.content:resize(417, 828)
     e.Mux._content.exchange_walker_live.onReveal(target)
     e.advance(0)
@@ -556,6 +558,34 @@ function tests.hidden_zero_sized_tab_reflows_when_revealed()
     eq(instance.background:get_height(), 828, "revealed tab fills available height")
     assert(instance.empty.text:find("No exchange loaded", 1, true))
     for _, message in ipairs(e.messages) do assert(not message:find("Mux content failed", 1, true), message) end
+end
+
+function tests.partial_existing_tab_instance_is_rebuilt_instead_of_accepted()
+    local e = environment({tabHost=true}); e.advance(0.25)
+    local ew = e.F2T_EXCHANGE_WALKER
+    local target = e.Mux.panes.pane_2._tabs[4]
+    local definition = assert(e.Mux._content.exchange_walker_live)
+    definition.remove(target)
+    ew.ui.instances[target] = { target=target, table_id="partial", headers={}, controls={} }
+    local applied = #e.Mux.applied
+    local placed, pane, status = ew.ui.placeRegisteredContent(
+        ew.ui.content_id, ew.ui.preferred_pane_start, ew.ui.preferred_pane_end)
+    assert(placed, tostring(pane)); eq(pane, "pane_2"); eq(status, "existing-tab")
+    eq(#e.Mux.applied, applied + 1, "partial mount must be reapplied")
+    assert(ew.ui.instanceHealthy(target), "replacement board is complete")
+    assert(ew.ui.instances[target].empty.text:find("No exchange loaded", 1, true))
+end
+
+function tests.active_existing_tab_repairs_hidden_content_slot()
+    local e = environment({tabHost=true}); e.advance(0.25)
+    local ew = e.F2T_EXCHANGE_WALKER
+    local target = e.Mux.panes.pane_2._tabs[4]
+    target.pane._activeTabId = target.id
+    target._contentSlot = e.widgets.__missing or { hidden=true, show=function(self) self.hidden=false end }
+    local placed = ew.ui.placeRegisteredContent(
+        ew.ui.content_id, ew.ui.preferred_pane_start, ew.ui.preferred_pane_end)
+    assert(placed); eq(target._contentSlot.hidden, false, "active tab content slot is revealed")
+    assert(ew.ui.instanceHealthy(target))
 end
 
 function tests.existing_tab_is_rebuilt_after_hot_reload_widget_teardown()
