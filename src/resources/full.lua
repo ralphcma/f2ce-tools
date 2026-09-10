@@ -329,6 +329,7 @@ Mux.registerWorkspace("f2ce-tools", {
                                 _activeContent = "exchange_walker_live",
                                 name = "Exchange Walker", closeable = false, contentState = {},
                                 contentable = false, movable = true, visible = false,
+                                nameAlign = "center", propertiesButton = false, renamable = false,
                                 rules = { { id = "ew_founder", enabled = true,
                                     cond = { ref = "ExchangeWalkerFounder" },
                                     act = "mux.showSelf", actElse = "mux.hideSelf" } }

@@ -7,7 +7,7 @@ the native `F2CE.API.v1` API and Walker. There is no separate Walker or
 API directly; older FedHauler versions still require the separate API.
 
 Baseline: F2CE 3.3.0 plus the existing map-content lifecycle repair, native API
-1.2.0 candidate.3, and Walker 3.4.0-native.9 ported from the public Walker 3.3.3
+1.2.0 candidate.3, and Walker 3.4.0-native.10 ported from the public Walker 3.3.3
 source at `e7276b81f962b3c7e4c72c6b34a161e1d3415ba6`.
 
 ## Settings and defaults
@@ -60,9 +60,12 @@ list and automation state; no account/profile folders are shared or edited.
 The content ID remains `exchange_walker_live`. New Full workspaces include an
 **Exchange Walker tab beside Who, Events and Exchange**. Existing layouts are
 searched by their tab content, not a hard-coded pane number; one Walker tab is
-added without switching the active tab. An existing Walker tab is reused. If
-that host is absent, an existing Walker pane or empty pane 15–32 is used. Map,
-Galaxy and foreign content are never repurposed or deleted.
+added without switching the active tab. A structurally native Walker tab is
+reused. A legacy user-style tab named exactly `Exchange Walker` in the native
+Who/Events/Exchange host is removed and recreated once at the same position,
+preserving whether it was selected. No other tab is deleted. If that host is
+absent, an existing Walker pane or empty pane 15–32 is used. Map, Galaxy and
+foreign content are never repurposed or deleted.
 
 The tab is hidden below **Founder** and while rank is unknown. Promotion reveals
 it; losing eligibility stops Walker and cancels its pending read-only capture.
@@ -116,6 +119,17 @@ an inactive restored tab could therefore retain `auto_hidden=true` after the
 tab itself became active, producing a fully valid but black mount. Active-tab
 repair now clears both flags on the tab content and Muxlet-owned content slot
 before reflowing the board.
+
+Candidate `native-ew14` replaces the malformed tab shell left by older dynamic
+placement. Unlike the exported Who, Events, and Exchange tabs, that shell used
+Muxlet's user-tab defaults (renameable, closeable, content-selectable, and with
+a properties button), and its Founder rule had been appended after construction
+without registering it with Muxlet's reactive engine. The migration tears down
+only that exact named tab's active content, removes the tab object, recreates it
+at the same index with the native locked settings, installs the Founder rule
+through Muxlet's native rule API, reapplies Walker content, and restores active
+selection. The Full workspace definition now carries the same complete tab
+settings, so fresh profiles take the native path without migration.
 
 **Refresh is read-only and works while OFF**. It does not make an applicable
 plan or authorize writes. Incomplete or wrong-planet responses retain the last

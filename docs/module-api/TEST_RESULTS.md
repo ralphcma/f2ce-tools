@@ -1,5 +1,31 @@
 # Module API verification
 
+## 2026-09-10 Exchange Walker native-tab reconstruction
+
+Candidate: `f2ce-tools-3.3.0-native-ew14.mpackage`; Walker
+3.4.0-native.10. API 1.2.0-candidate.3 is unchanged.
+
+SHA-256: `0a31c4f13764ac4c76f1086c8803e78945bc582916b3c219106deb8d9b9f555f`.
+
+The remaining black-tab reports shared a malformed saved tab shell. Muxlet's
+working Who, Events, and Exchange tabs are restored with native locked
+capabilities, while older Walker placement created a normal user tab and then
+appended its Founder rule without registering that tab with the reactive rule
+engine. Replacing only the content slot left that broken lifecycle intact.
+
+Walker now identifies only an exact `Exchange Walker` tab inside the native
+Who/Events/Exchange host. If it has the legacy shell, Walker removes its active
+content through Muxlet, deletes the old tab object, recreates it at the same
+position with the same locked settings as the working tabs, registers the
+Founder rule through Muxlet's native API, applies a new content slot, and
+restores active selection. A valid native tab remains untouched. The exported
+Full workspace now declares every matching setting explicitly.
+
+Source and exact-package runs pass all 81 native groups: API 23, adapter 5,
+Walker 30, startup 7, topology 8, map lifecycle 1, and Galaxy lifecycle 7. All
+250 Lua checks, 32 metadata checks, and 221 compiled-script/source matches pass.
+No profile was modified and no package was installed, pushed, or released.
+
 ## 2026-09-10 Exchange Walker restored-tab inherited visibility recovery
 
 Candidate: `f2ce-tools-3.3.0-native-ew13.mpackage`; Walker

@@ -138,6 +138,16 @@ local function environment(options)
         function mux.registerContent(key, def) mux.registrations = mux.registrations + 1; mux._content[key] = def end
         function mux.getPane(key) return mux.panes[key] end
         function mux.createDeclarativeCondition(rule) mux.condition = rule end
+        function mux._addRule(target, rule)
+            target.rules = target.rules or {}
+            for index = #target.rules, 1, -1 do
+                if target.rules[index].id == rule.id then table.remove(target.rules, index) end
+            end
+            target.rules[#target.rules + 1] = rule
+            mux.runAction(e.gmcp.char.vitals.rank == "Founder" and rule.act or rule.actElse,
+                { tab = target, pane = target.pane })
+            return rule
+        end
         function mux.runAction(action, ctx)
             local target = ctx.tab or ctx.pane
             target.hidden = action == "mux.hideSelf"
@@ -148,16 +158,37 @@ local function environment(options)
             if old and old.remove then old.remove(target) end
             mux._content[key].apply(target); target._activeContent = key
         end
+        function mux._removeContent(target)
+            local old = mux._content[target._activeContent]
+            if old and old.remove then old.remove(target) end
+            target._activeContent = nil
+        end
         for _, index in ipairs({1, 7, 15, 16}) do
             mux.panes["pane_" .. index] = { id = "pane_" .. index, content = widget({}), contentBg = widget({}) }
         end
         if options.tabHost then
             local pane = { id = "pane_2", _tabs = {}, _hiddenTabs = {}, active = "who", _activeTabId = "who",
                 _tabViewport = widget({ width = 417, height = 828 }) }
-            function pane:addTab(name)
+            function pane:addTab(name, position)
                 local geometry = options.zeroSizedTab and { width = 0, height = 0 } or {}
-                local tab = { id = name, pane = self, content = widget(geometry), contentBg = widget({}) }
-                self._tabs[#self._tabs + 1] = tab; return tab
+                self._tabSeq = (self._tabSeq or 0) + 1
+                local tab = { id = name .. "-" .. self._tabSeq, name = name, pane = self,
+                    renamable = true, closeable = true, movable = true, contentable = true,
+                    nameAlign = "center", rules = {}, content = widget(geometry), contentBg = widget({}) }
+                table.insert(self._tabs, position or (#self._tabs + 1), tab)
+                return tab
+            end
+            function pane:removeTab(id)
+                for index, tab in ipairs(self._tabs) do
+                    if tab.id == id then
+                        self.removed = tab
+                        table.remove(self._tabs, index)
+                        return
+                    end
+                end
+            end
+            function pane:activateTab(id)
+                self._activeTabId = id
             end
             for _, name in ipairs({ "who", "events", "exchange" }) do
                 pane:addTab(name)._activeContent = "fed2_" .. name
@@ -485,6 +516,9 @@ function tests.board_tab_joins_existing_tabs_and_is_rank_gated()
     e.gmcp.char.vitals.rank = "Founder"; e.event("gmcp.char.vitals")
     eq(#pane._tabs, 4); eq(pane.active, "who")
     eq(pane._tabs[4]._activeContent, "exchange_walker_live")
+    eq(pane._tabs[4].renamable, false); eq(pane._tabs[4].closeable, false)
+    eq(pane._tabs[4].contentable, false); eq(pane._tabs[4].propertiesButton, false)
+    eq(pane._tabs[4].rules[1].id, "ew_founder")
     eq(e.Mux.panes.pane_1._activeContent, "nativeMap"); eq(e.Mux.panes.pane_7._activeContent, "fed2_galaxy")
     e.event("gmcp.char.vitals"); eq(#pane._tabs, 4)
     assert(ew.inspect("Tempest")); eq(e.f2t_po.phase, "capturing_exchange")
@@ -623,11 +657,35 @@ function tests.stale_named_exchange_walker_tab_is_rebound_to_native_content()
     local e = environment({tabHost=true, staleNamedTab=true}); e.advance(0.25)
     local ew = e.F2T_EXCHANGE_WALKER
     local pane = e.Mux.panes.pane_2
-    eq(#pane._tabs, 4, "the stale named tab is reused instead of adding a duplicate")
+    eq(#pane._tabs, 4, "the stale named tab is replaced without adding a duplicate")
     local target = pane._tabs[4]
     eq(target.name, "Exchange Walker")
+    assert(pane.removed and pane.removed ~= target, "the malformed tab object must be replaced")
     eq(target._activeContent, ew.ui.content_id, "stale cargo binding is replaced")
+    eq(target.renamable, false); eq(target.closeable, false); eq(target.contentable, false)
+    eq(target.propertiesButton, false); eq(target.rules[1].id, "ew_founder")
     assert(ew.ui.instanceHealthy(target), "rebound tab contains a complete Walker board")
+end
+
+function tests.malformed_live_tab_is_deleted_and_rebuilt_at_same_active_position()
+    local e = environment({tabHost=true}); e.advance(0.25)
+    local ew, pane = e.F2T_EXCHANGE_WALKER, e.Mux.panes.pane_2
+    local malformed = pane._tabs[4]
+    assert(ew.ui.instanceHealthy(malformed), "initial tab owns a live board")
+    malformed.renamable, malformed.closeable = true, true
+    malformed.contentable, malformed.propertiesButton = true, nil
+    pane._activeTabId = malformed.id
+
+    local placed, host, status = ew.ui.placeDefault()
+    assert(placed, tostring(host)); eq(host, "pane_2"); eq(status, "rebuilt-tab")
+    eq(#pane._tabs, 4); eq(pane.removed, malformed)
+    eq(ew.ui.instances[malformed], nil, "old Geyser tree is torn down")
+    local replacement = pane._tabs[4]
+    assert(replacement ~= malformed); eq(pane._activeTabId, replacement.id)
+    eq(replacement.name, "Exchange Walker"); eq(replacement.renamable, false)
+    eq(replacement.closeable, false); eq(replacement.contentable, false)
+    eq(replacement.propertiesButton, false); eq(replacement.rules[1].id, "ew_founder")
+    assert(ew.ui.instanceHealthy(replacement), "replacement owns a complete board")
 end
 
 function tests.stale_named_tab_wins_over_a_temporary_direct_pane_mount()
@@ -641,8 +699,10 @@ function tests.stale_named_tab_wins_over_a_temporary_direct_pane_mount()
     assert(ew.ui.instanceHealthy(temporary), "temporary pane reproduces the working workaround")
     local placed, pane, status = ew.ui.placeDefault()
     assert(placed, tostring(pane)); eq(pane, "pane_2"); eq(status, "existing-tab")
-    eq(named._activeContent, ew.ui.content_id, "the intended named tab is still repaired")
-    assert(ew.ui.instanceHealthy(named))
+    local repaired = e.Mux.panes.pane_2._tabs[4]
+    eq(repaired, named, "a structurally native named tab is repaired in place")
+    eq(repaired._activeContent, ew.ui.content_id, "the intended named tab is still repaired")
+    assert(ew.ui.instanceHealthy(repaired))
 end
 
 function tests.existing_tab_is_rebuilt_after_hot_reload_widget_teardown()
