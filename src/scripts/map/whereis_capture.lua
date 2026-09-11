@@ -7,6 +7,19 @@
 
 F2T_MAP_WHEREIS_CAPTURE = F2T_MAP_WHEREIS_CAPTURE or {active = false}
 
+-- Cancellation deliberately does not invoke the result callback.  The
+-- navigation cancellation epoch owns that outcome; calling an old callback
+-- here could immediately start a replacement exploration after the API has
+-- released its lease.
+function f2t_map_whereis_cancel()
+    if not F2T_MAP_WHEREIS_CAPTURE.active then return false end
+    if F2T_MAP_WHEREIS_CAPTURE.timer_id then
+        killTimer(F2T_MAP_WHEREIS_CAPTURE.timer_id)
+    end
+    F2T_MAP_WHEREIS_CAPTURE = {active = false}
+    return true
+end
+
 function f2t_map_whereis_lookup(planet_name, callback)
     if F2T_MAP_WHEREIS_CAPTURE.active then
         callback(nil)

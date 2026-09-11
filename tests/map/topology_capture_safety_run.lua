@@ -123,7 +123,13 @@ function tests.reload_retires_only_the_old_topology_capture()
     check(env.f2t_map_topology_sync(function(ok) callbacks=callbacks+1; equal(ok,false,"reload callback") end,
         {automatic=true,silent=true}))
     env.F2T_CAPTURE_WINDOWS={other={timerId=999}}
-    local chunk=assert(loadfile(script_path)); setfenv(chunk,env); chunk()
+    local chunk
+    if setfenv then
+        chunk=assert(loadfile(script_path)); setfenv(chunk,env)
+    else
+        chunk=assert(loadfile(script_path,"t",env))
+    end
+    chunk()
     equal(env.F2T_MAP_TOPOLOGY_CAPTURE.active,false,"reload inactive")
     equal(callbacks,1,"reload callback count")
     equal(env.F2T_CAPTURE_WINDOWS.other.timerId,999,"foreign capture preserved")

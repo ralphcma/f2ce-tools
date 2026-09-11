@@ -142,6 +142,27 @@ function f2t_map_handle_special_movement(direction)
     return false
 end
 
+-- A route is copied out of Mudlet's global speedWalkDir/speedWalkPath arrays
+-- when the walk starts.  GMCP refreshes every room as we enter it and may
+-- remove or repoint an imported exit after that copy was made.  Confirm the
+-- next copied edge still exists before sending it; otherwise re-plan from the
+-- authoritative room we are actually standing in instead of deliberately
+-- taking one stale step and waiting for its timeout.
+local function mapped_destination(room_id, command)
+    if not room_id or not command then return nil end
+    local regular = getRoomExits(room_id) or {}
+    local normalized = f2t_map_normalize_direction(command)
+    local expanded = {
+        n="north", ne="northeast", nw="northwest", e="east", w="west",
+        s="south", se="southeast", sw="southwest", u="up", d="down",
+    }
+    local destination = regular[command] or regular[normalized]
+    if not destination and expanded[command] then destination = regular[expanded[command]] end
+    if destination then return tonumber(destination) end
+    local special = getSpecialExitsSwap(room_id) or {}
+    return tonumber(special[command])
+end
+
 function f2t_map_speedwalk_next_step()
     if not F2T_SPEEDWALK_ACTIVE then return end
     if F2T_SPEEDWALK_PAUSED then return end
@@ -152,8 +173,19 @@ function f2t_map_speedwalk_next_step()
     end
     local direction = F2T_SPEEDWALK_DIR[F2T_SPEEDWALK_CURRENT_STEP]
     if f2t_map_handle_special_movement(direction) then return end
+    local planned_room = tonumber(F2T_SPEEDWALK_PATH[F2T_SPEEDWALK_CURRENT_STEP])
+    if not F2T_SPEEDWALK_BLIND and planned_room and F2T_MAP_CURRENT_ROOM_ID then
+        local mapped_room = mapped_destination(F2T_MAP_CURRENT_ROOM_ID, direction)
+        if mapped_room ~= planned_room then
+            f2t_debug_log("[map/walk] copied edge '%s': planned %s, live map now %s - replanning",
+                tostring(direction), f2t_map_describe_room(planned_room),
+                f2t_map_describe_room(mapped_room))
+            f2t_map_speedwalk_recompute_path(true)
+            return
+        end
+    end
     F2T_SPEEDWALK_LAST_COMMAND      = direction
-    F2T_SPEEDWALK_EXPECTED_ROOM_ID  = tonumber(F2T_SPEEDWALK_PATH[F2T_SPEEDWALK_CURRENT_STEP])
+    F2T_SPEEDWALK_EXPECTED_ROOM_ID  = planned_room
     F2T_SPEEDWALK_WAITING_FOR_MOVE  = true
     F2T_SPEEDWALK_ROOM_BEFORE_MOVE  = F2T_MAP_CURRENT_ROOM_ID
     f2t_debug_log("[map/walk]   step %d/%d '%s': from %s, expecting %s",
@@ -171,6 +203,19 @@ end
 -- out longhand drifted apart over which globals they remembered to clear.
 -- `result` is what owners read back as the last result; `abandonCircuit` is
 -- for the two paths that give up on a circuit rather than finishing it.
+local function signalNavigationStateChanged()
+    -- A blocked move can terminate on a timer with no room GMCP event. Wake
+    -- the API on the next tick so it can observe the terminal result and
+    -- compare-and-release its lease instead of waiting forever for movement
+    -- that has already stopped.
+    tempTimer(0, function()
+        local navigation = F2CE and F2CE.API and F2CE.API.v1 and F2CE.API.v1.navigation
+        if navigation and type(navigation._tick) == "function" then
+            pcall(navigation._tick)
+        end
+    end)
+end
+
 local function resetSpeedwalkState(result, abandonCircuit)
     F2T_SPEEDWALK_LAST_RESULT = result
     f2t_map_speedwalk_restore_mode()
@@ -199,7 +244,12 @@ local function resetSpeedwalkState(result, abandonCircuit)
     F2T_SPEEDWALK_FAILED_MOVES         = {}
     F2T_SPEEDWALK_REFUSALS             = 0
     F2T_SPEEDWALK_NAV_REQUEST          = nil
-    f2t_map_clear_nav_owner()
+    -- Navigation ownership belongs to the whole caller operation, not to one
+    -- speedwalk leg.  API navigation, hauling and exploration all legitimately
+    -- run several walks separated by asynchronous captures or re-plans.  Their
+    -- own terminal cleanup releases the owner; clearing it here created an
+    -- unowned gap after every arrival and let another controller start.
+    signalNavigationStateChanged()
 end
 
 function f2t_map_speedwalk_complete()
@@ -328,6 +378,53 @@ function f2t_map_speedwalk_on_room_change()
                 end
                 movement_success = true
                 repointed = true
+            elseif from_room and current_room ~= from_room
+                and string.lower(F2T_SPEEDWALK_LAST_COMMAND) == "board" then
+                -- A few legacy systems advertise a synthetic board hash but
+                -- actually land in their ordinary room-396 shuttlepad.  The
+                -- live transition is stronger evidence than the imported
+                -- special edge.  Only repair a board edge when the endpoints
+                -- form a same-planet orbit/shuttlepad pair, so a coincidental
+                -- room change can never rewrite it.
+                local from_planet = getRoomUserData(from_room, "fed2_planet")
+                local to_planet = getRoomUserData(current_room, "fed2_planet")
+                local from_orbit = f2t_map_room_has_flag(from_room, "orbit")
+                local from_pad = f2t_map_room_has_flag(from_room, "shuttlepad")
+                local to_orbit = f2t_map_room_has_flag(current_room, "orbit")
+                local to_pad = f2t_map_room_has_flag(current_room, "shuttlepad")
+                local same_planet = from_planet and to_planet and from_planet ~= "" and to_planet ~= ""
+                    and string.lower(from_planet) == string.lower(to_planet)
+                if same_planet and ((from_orbit and to_pad) or (from_pad and to_orbit)) then
+                    removeSpecialExit(from_room, F2T_SPEEDWALK_LAST_COMMAND)
+                    addSpecialExit(from_room, current_room, F2T_SPEEDWALK_LAST_COMMAND)
+                    if type(f2t_map_remember_board_pair) == "function" then
+                        f2t_map_remember_board_pair(from_room, current_room)
+                    end
+                    cecho(string.format(
+                        "\n<yellow>[map]<reset> 'board' actually arrives at room %d - map corrected\n",
+                        current_room))
+                    f2t_debug_log("[map] Repointed 'board' from room %s: %s -> %d",
+                        tostring(from_room), tostring(expected_room), current_room)
+                    movement_success = true
+                    repointed = true
+                end
+            elseif from_room and current_room ~= from_room then
+                -- The same first-hand correction is safe for a standard
+                -- direction: this exact command was just sent from from_room
+                -- and GMCP authoritatively placed us in current_room.
+                local direction_number = f2t_map_direction_to_number(F2T_SPEEDWALK_LAST_COMMAND)
+                if direction_number then
+                    setExit(from_room, current_room, direction_number)
+                    setExitStub(from_room, direction_number, false)
+                    cecho(string.format(
+                        "\n<yellow>[map]<reset> '%s' actually arrives at room %d - map corrected\n",
+                        F2T_SPEEDWALK_LAST_COMMAND, current_room))
+                    f2t_debug_log("[map] Repointed '%s' from room %s: %s -> %d",
+                        tostring(F2T_SPEEDWALK_LAST_COMMAND), tostring(from_room),
+                        tostring(expected_room), current_room)
+                    movement_success = true
+                    repointed = true
+                end
             end
         end
 

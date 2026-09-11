@@ -1,5 +1,33 @@
 # Module API verification
 
+## 2026-09-11 Native navigation resilience and map repair
+
+Candidate: `f2ce-tools-3.3.0-native-ew17.mpackage`; Walker
+3.4.0-native.12 and API 1.2.0-candidate.3 are unchanged.
+
+SHA-256: `5d4204bd0dffd2c20864ca8dda90e56934dc583af0acb9af5cb9fc6b97c3b9af`.
+
+Navigation ownership now spans the complete API/hauling/exploration operation
+instead of being cleared after each individual speedwalk. Route cancellation
+invalidates queued callbacks and stops speedwalking, circuit travel,
+exploration, arrival handlers, and `whereis` capture. Unknown-location retries
+are bounded, and a copied route edge is revalidated against the live map before
+its command is sent.
+
+Imported maps reconcile known regular-exit stubs and isolated legacy
+`(via board)` rooms. A board endpoint proven by a live orbit/shuttlepad
+transition is saved by room hash and cannot be overwritten by a later stale
+GMCP board hint. Duplicate destination selection now prefers the current,
+reachable, reciprocal, and most recently observed record deterministically.
+Headless export also preserves command-keyed special exits; older code iterated
+that Mudlet table backwards and silently omitted `board` and `jump` edges.
+
+Source and exact-package verification pass all 91 native groups: API 23,
+adapter 5, Walker 30, startup 7, topology 8, map lifecycle 1, Galaxy lifecycle
+7, and navigation resilience 10. All 251 Lua syntax checks, 32 metadata checks,
+and 221 packaged-script comparisons pass. No profile was modified and no
+package was installed, pushed, or released.
+
 ## 2026-09-10 Exchange Walker column headings and policy bounds
 
 Candidate: `f2ce-tools-3.3.0-native-ew16.mpackage`; Walker

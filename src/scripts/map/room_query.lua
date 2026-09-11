@@ -39,13 +39,52 @@ end
 -- already in.
 local function preferReachable(candidates)
     if #candidates < 2 then return candidates[1] end
-    local here = F2T_MAP_CURRENT_ROOM_ID
-    if here then
-        for _, room_id in ipairs(candidates) do
-            if room_id == here or getPath(here, room_id) then return room_id end
+    local here = tonumber(F2T_MAP_CURRENT_ROOM_ID)
+
+    -- Do not depend on Mudlet's room-table enumeration order when an import
+    -- contains duplicate orbit, shuttlepad, or exchange records.  A reachable
+    -- room is safer than a stranded duplicate; among equally reachable rooms,
+    -- a reciprocal board pair is strong structural evidence and fresh GMCP is
+    -- the final authority.  The numeric id is only a deterministic tie-break.
+    local ranked = {}
+    for _, candidate in ipairs(candidates) do
+        local room_id = tonumber(candidate)
+        if room_id and roomExists(room_id) then
+            local reachable = false
+            if here then
+                if room_id == here then
+                    reachable = true
+                else
+                    local ok, found = pcall(getPath, here, room_id)
+                    reachable = ok and found == true
+                end
+            end
+
+            local board_score = 0
+            local peer = tonumber((getSpecialExitsSwap(room_id) or {}).board)
+            if peer and roomExists(peer) then
+                board_score = 1
+                if tonumber((getSpecialExitsSwap(peer) or {}).board) == room_id then
+                    board_score = 2
+                end
+            end
+            ranked[#ranked + 1] = {
+                id = room_id,
+                current = here == room_id and 1 or 0,
+                reachable = reachable and 1 or 0,
+                board = board_score,
+                seen = tonumber(getRoomUserData(room_id, "fed2_seen_at")) or 0,
+            }
         end
     end
-    return candidates[1]
+    table.sort(ranked, function(left, right)
+        if left.current ~= right.current then return left.current > right.current end
+        if left.reachable ~= right.reachable then return left.reachable > right.reachable end
+        if left.board ~= right.board then return left.board > right.board end
+        if left.seen ~= right.seen then return left.seen > right.seen end
+        return left.id < right.id
+    end)
+    return ranked[1] and ranked[1].id or candidates[1]
 end
 
 -- The room in a system's space area that orbits a given planet, which is
@@ -81,7 +120,8 @@ function f2t_map_find_shuttlepad_room(planet_name)
         -- value shape has varied across Mudlet versions, so check it.
         for dest_room_id, commands in pairs(getSpecialExits(orbit_room) or {}) do
             if type(commands) == "table" and roomExists(dest_room_id)
-                and getRoomArea(dest_room_id) == planet_area_id then
+                and getRoomArea(dest_room_id) == planet_area_id
+                and getRoomUserData(dest_room_id, "fed2_flag_shuttlepad") == "true" then
                 for command in pairs(commands) do
                     if type(command) == "string" and string.lower(command) == "board" then
                         return dest_room_id
@@ -321,7 +361,7 @@ function f2t_map_resolve_location(location)
                 end
             end
 
-            target_id = matching_rooms[1]
+            target_id = preferReachable(matching_rooms)
             return target_id, nil
         end
     end
@@ -352,12 +392,7 @@ function f2t_map_resolve_location(location)
             if not space_area_id then
                 return nil, string.format("'%s' system space not in your map - fly there to add it", single_arg)
             end
-            for _, room_id in ipairs(f2t_map_area_room_list(space_area_id)) do
-                local room_planet = getRoomUserData(room_id, "fed2_planet")
-                if room_planet and string.lower(room_planet) == string.lower(single_arg) then
-                    target_id = room_id; break
-                end
-            end
+            target_id = f2t_map_find_orbit_room(space_area_name, single_arg)
             if target_id then return target_id, nil end
             return nil, string.format(
                 "No orbit mapped for '%s' - try 'map explore %s' to discover it", single_arg, system_name)
@@ -365,7 +400,8 @@ function f2t_map_resolve_location(location)
         elseif planet_dest == "exchange" then
             local planet_area_id = f2t_map_get_area_id(single_arg)
             if planet_area_id then
-                target_id = f2t_map_find_room_with_flag(planet_area_id, "exchange")
+                target_id = preferReachable(
+                    f2t_map_find_all_rooms_with_flag(planet_area_id, "exchange"))
                 if target_id then return target_id, nil end
                 local err_msg = string.format(
                     "No exchange mapped on '%s' - try 'map explore %s' to discover one", single_arg, single_arg)
@@ -467,6 +503,6 @@ function f2t_map_resolve_location(location)
         end
     end
 
-    target_id = matching_rooms[1]
+    target_id = preferReachable(matching_rooms)
     return target_id, nil
 end

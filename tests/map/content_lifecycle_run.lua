@@ -58,8 +58,13 @@ end
 local function flush()
     while #env.timers > 0 do table.remove(env.timers, 1)() end
 end
-local chunk = assert(loadfile(script_path))
-setfenv(chunk, env)
+local chunk
+if setfenv then
+    chunk = assert(loadfile(script_path))
+    setfenv(chunk, env)
+else
+    chunk = assert(loadfile(script_path, "t", env))
+end
 chunk()
 env.f2tRegisterMapContent()
 local def = env.Mux._content.fed2_map

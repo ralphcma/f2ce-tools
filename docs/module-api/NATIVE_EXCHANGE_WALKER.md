@@ -148,6 +148,11 @@ behind a nested-label visibility boundary. Settings also display and enforce
 the server ranges consistently: spreads 6-40%, minimum stock 0-10,000 tons,
 and maximum stock 0-20,000 tons, with minimum never above maximum.
 
+Candidate `native-ew17` hardens the shared navigation used by Walker and other
+API consumers. Ownership covers the entire asynchronous operation, cancellation
+stops every nested navigation layer, stale copied edges are checked before send,
+and imported/live map evidence repairs legacy board and regular-exit defects.
+
 **Refresh is read-only and works while OFF**. It does not make an applicable
 plan or authorize writes. Incomplete or wrong-planet responses retain the last
 valid table with an error. Preview still requires ON, captures production too,

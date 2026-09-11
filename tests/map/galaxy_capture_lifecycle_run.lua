@@ -27,7 +27,14 @@ local function scenario()
         e.sent[#e.sent+1]=command
     end
     function e.load(path)
-        local f=assert(loadfile(root.."/src/scripts/"..path..".lua")); setfenv(f,e); f()
+        local full_path=root.."/src/scripts/"..path..".lua"
+        local f
+        if setfenv then
+            f=assert(loadfile(full_path)); setfenv(f,e)
+        else
+            f=assert(loadfile(full_path,"t",e))
+        end
+        f()
     end
     function e.advance(seconds)
         local finish=e.now+seconds

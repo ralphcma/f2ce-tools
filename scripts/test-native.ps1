@@ -26,7 +26,14 @@ try {
             @('tests/map/startup_topology_sync_run.lua', "$SourceRoot/src/scripts/map/events.lua"),
             @('tests/map/topology_capture_safety_run.lua', "$SourceRoot/src/scripts/map/topology_capture.lua"),
             @('tests/map/content_lifecycle_run.lua', "$SourceRoot/src/scripts/ui/content/map.lua"),
-            @('tests/map/galaxy_capture_lifecycle_run.lua', $SourceRoot)
+            @('tests/map/galaxy_capture_lifecycle_run.lua', $SourceRoot),
+            @('tests/map/navigation_resilience_run.lua',
+                "$SourceRoot/src/scripts/map/speedwalk.lua",
+                "$SourceRoot/src/scripts/map/whereis_capture.lua",
+                "$SourceRoot/src/scripts/map/navigate.lua",
+                "$SourceRoot/src/scripts/map/exit.lua",
+                "$SourceRoot/src/scripts/map/room_query.lua",
+                "$SourceRoot/src/scripts/map/import_export.lua")
         )
         foreach ($command in $commands) {
             & $LuaExe @command

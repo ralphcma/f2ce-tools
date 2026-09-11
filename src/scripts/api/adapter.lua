@@ -199,13 +199,38 @@ function adapter.navigate(destination, options)
     local result, detail = f2t_map_navigate(destination, options)
     return result, detail
 end
-function adapter.navPause() return type(f2t_map_speedwalk_pause) == "function" and f2t_map_speedwalk_pause() or false end
-function adapter.navResume() return type(f2t_map_speedwalk_resume) == "function" and f2t_map_speedwalk_resume() or false end
-function adapter.navStop() return type(f2t_map_speedwalk_stop) == "function" and f2t_map_speedwalk_stop() or false end
+function adapter.navPause()
+    if F2T_SPEEDWALK_ACTIVE and type(f2t_map_speedwalk_pause) == "function" then
+        return f2t_map_speedwalk_pause()
+    end
+    if active(F2T_MAP_EXPLORE_STATE) and type(f2t_map_explore_pause) == "function" then
+        f2t_map_explore_pause()
+        return true
+    end
+    return false
+end
+function adapter.navResume()
+    if F2T_SPEEDWALK_ACTIVE and type(f2t_map_speedwalk_resume) == "function" then
+        return f2t_map_speedwalk_resume()
+    end
+    if active(F2T_MAP_EXPLORE_STATE) and F2T_MAP_EXPLORE_STATE.paused
+        and type(f2t_map_explore_resume) == "function" then
+        f2t_map_explore_resume()
+        return true
+    end
+    return false
+end
+function adapter.navStop()
+    if type(f2t_map_navigation_cancel) == "function" then
+        return f2t_map_navigation_cancel("API navigation cancelled")
+    end
+    return type(f2t_map_speedwalk_stop) == "function" and f2t_map_speedwalk_stop() or false
+end
 function adapter.navState()
     return {
         active = F2T_SPEEDWALK_ACTIVE == true,
-        paused = F2T_SPEEDWALK_PAUSED == true,
+        paused = F2T_SPEEDWALK_PAUSED == true
+            or (active(F2T_MAP_EXPLORE_STATE) and F2T_MAP_EXPLORE_STATE.paused == true),
         result = F2T_SPEEDWALK_LAST_RESULT,
         owner = F2T_SPEEDWALK_OWNER,
         exploring = active(F2T_MAP_EXPLORE_STATE),

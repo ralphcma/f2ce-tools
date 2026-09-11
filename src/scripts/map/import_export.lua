@@ -65,10 +65,14 @@ function f2t_map_save_json_headless(file_path)
                     if ok_lock and locked then e.locked = true end
                     exits[#exits + 1] = e
                 end
-                -- Special (command) exits: getSpecialExitsSwap → { destId = command }.
+                -- Special (command) exits: getSpecialExitsSwap →
+                -- { [command] = destId }.  Iterating this backwards silently
+                -- dropped every board/jump edge because tonumber(command) is
+                -- nil, leaving a freshly imported map less connected than the
+                -- one that was saved.
                 local ok_sp, specials = pcall(getSpecialExitsSwap, rid)
                 if ok_sp and type(specials) == "table" then
-                    for dest, command in pairs(specials) do
+                    for command, dest in pairs(specials) do
                         local dest_id = tonumber(dest)
                         if dest_id then exits[#exits + 1] = { name = tostring(command), exitId = dest_id } end
                     end
@@ -378,6 +382,12 @@ function f2t_map_import_file(file_path)
         success, error_msg = f2t_map_load_json_headless(file_path)
     end
     if not success then return false, error_msg or "unknown error" end
+
+    F2T_MAP_SESSION_ROUTES_RECONCILED = false
+    if type(f2t_map_reconcile_cached_routes) == "function" then
+        f2t_map_reconcile_cached_routes()
+        F2T_MAP_SESSION_ROUTES_RECONCILED = true
+    end
 
     local new_room_count = 0
     for _ in pairs(getRooms()) do new_room_count = new_room_count + 1 end

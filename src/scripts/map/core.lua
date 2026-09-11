@@ -14,6 +14,13 @@ function f2t_map_handle_gmcp_room()
     local room_data = gmcp.room.info
     if not room_data.system or not room_data.area or not room_data.num then return end
 
+    if not F2T_MAP_SESSION_ROUTES_RECONCILED then
+        F2T_MAP_SESSION_ROUTES_RECONCILED = true
+        if type(f2t_map_reconcile_cached_routes) == "function" then
+            f2t_map_reconcile_cached_routes()
+        end
+    end
+
     local hash = f2t_map_generate_hash(room_data)
     if not hash then return end
 
@@ -38,6 +45,12 @@ function f2t_map_handle_gmcp_room()
     f2t_map_process_special_exits(room_id, room_data)
 
     F2T_MAP_CURRENT_ROOM_ID = room_id
+    -- Candidate selection can now prefer rooms confirmed by live GMCP over
+    -- equally-named imported duplicates.
+    setRoomUserData(room_id, "fed2_seen_at", tostring(os.time()))
+    -- A synthetic target becomes authoritative only if the game ever places
+    -- us there. Until then this marker distinguishes it from the real pad.
+    setRoomUserData(room_id, "fed2_synthetic_board", "")
 
     if F2T_SPEEDWALK_PAUSED_FOR_DISCONNECT then
         f2t_map_speedwalk_resume_after_disconnect()

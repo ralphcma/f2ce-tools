@@ -16,6 +16,7 @@ local function engineFields()
         refuel_state = nil, refuel_declined = nil, refuel_detours = 0,
         stop_when = nil, stop_reason = nil, on_stop_early = nil,
         last_room_before_move = nil, last_direction_attempted = nil,
+        arrival_handler_id = nil,
         stats = {rooms_discovered=0,special_exits_found=0,suspected_special_exits=0,blocked_exits=0,deaths=0},
     }
 end
@@ -51,6 +52,14 @@ end
 
 F2T_MAP_EXPLORE_STATE = F2T_MAP_EXPLORE_STATE or blankState()
 
+function f2t_map_explore_cancel_arrival_handler()
+    local handler_id = F2T_MAP_EXPLORE_STATE and F2T_MAP_EXPLORE_STATE.arrival_handler_id
+    if not handler_id then return false end
+    killAnonymousEventHandler(handler_id)
+    F2T_MAP_EXPLORE_STATE.arrival_handler_id = nil
+    return true
+end
+
 -- Layer entry and exit for a callback-driven caller. Only the call that finds
 -- the state idle owns the run: it claims .active and the safety hooks, and
 -- its completion is what releases them again. A call nested under a parent
@@ -62,8 +71,12 @@ function f2t_map_explore_claim_run(mode)
 end
 
 function f2t_map_explore_release_run()
+    f2t_map_explore_cancel_arrival_handler()
     F2T_MAP_EXPLORE_STATE.active = false
-    f2t_map_clear_nav_owner()
+    -- A navigation/API or hauling owner may have started this sweep as one
+    -- leg of a larger operation.  Only release the owner exploration claimed
+    -- for itself; never clear a caller's long-lived lease.
+    if F2T_SPEEDWALK_OWNER == "map-explore" then f2t_map_clear_nav_owner() end
     if f2t_stamina_unregister_client then f2t_stamina_unregister_client() end
 end
 
@@ -158,6 +171,10 @@ function f2t_map_explore_travel_to_planet(planet_mode, planet_name, on_complete_
         handler_id = registerAnonymousEventHandler("gmcp.room.info", function()
             if F2T_SPEEDWALK_ACTIVE then return end
             killAnonymousEventHandler(handler_id)
+            if F2T_MAP_EXPLORE_STATE.arrival_handler_id == handler_id then
+                F2T_MAP_EXPLORE_STATE.arrival_handler_id = nil
+            end
+            if not F2T_MAP_EXPLORE_STATE.active then return end
             local area = getRoomArea(F2T_MAP_CURRENT_ROOM_ID)
             local arrived_planet = area and getRoomAreaName(area)
             if not arrived_planet or arrived_planet:lower() ~= planet_name:lower() then
@@ -167,6 +184,7 @@ function f2t_map_explore_travel_to_planet(planet_mode, planet_name, on_complete_
             end
             start_here()
         end)
+        F2T_MAP_EXPLORE_STATE.arrival_handler_id = handler_id
     end
 
     -- For the by-room-id call below, which passes no on_result and so has to
@@ -485,13 +503,18 @@ end
 -- entry point (system/cartel/galaxy/syndicate all register the same pair;
 -- nested layers skip this since the parent that started the sweep already holds it).
 function f2t_map_explore_register_safety_hooks()
-    f2t_map_set_nav_owner("map-explore", function(reason)
-        if reason == "customs" then
-            F2T_MAP_EXPLORE_STATE.paused = true
-            F2T_MAP_EXPLORE_STATE.paused_reason = reason
-        end
-        return {auto_resume = true}
-    end)
+    -- Preserve an API/hauling owner when exploration is only an internal
+    -- compensation leg.  Overwriting it with "map-explore" made the API see
+    -- its own route as foreign navigation on the next GMCP tick.
+    if F2T_SPEEDWALK_OWNER == nil then
+        f2t_map_set_nav_owner("map-explore", function(reason)
+            if reason == "customs" then
+                F2T_MAP_EXPLORE_STATE.paused = true
+                F2T_MAP_EXPLORE_STATE.paused_reason = reason
+            end
+            return {auto_resume = true}
+        end)
+    end
 
     if f2t_stamina_register_client then
         f2t_stamina_register_client({
@@ -749,7 +772,8 @@ function f2t_map_explore_stop(reason)
     if not F2T_MAP_EXPLORE_STATE.active then
         cecho("\n<yellow>[map-explore]<reset> No exploration in progress\n"); return
     end
-    f2t_map_clear_nav_owner()
+    f2t_map_explore_cancel_arrival_handler()
+    if F2T_SPEEDWALK_OWNER == "map-explore" then f2t_map_clear_nav_owner() end
     if f2t_stamina_unregister_client then f2t_stamina_unregister_client() end
     f2t_map_explore_unlock_temp_exits()
     if reason then

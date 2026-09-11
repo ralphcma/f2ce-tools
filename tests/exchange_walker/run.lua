@@ -57,7 +57,14 @@ local function environment(options)
         error("timer loop")
     end
     function e.load(path)
-        local fn = assert(loadfile(root .. "/" .. path)); setfenv(fn, e); return fn()
+        local full_path = root .. "/" .. path
+        local fn
+        if setfenv then
+            fn = assert(loadfile(full_path)); setfenv(fn, e)
+        else
+            fn = assert(loadfile(full_path, "t", e))
+        end
+        return fn()
     end
     e.widgets = {}
     local function widget(spec, parent)

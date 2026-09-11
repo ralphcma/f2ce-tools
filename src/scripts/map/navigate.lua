@@ -45,6 +45,46 @@
 -- the room actually asked for. The `explored` set is what really bounds the
 -- chain - a scope is never swept twice - and this is the backstop.
 local MAX_COMPENSATE_ATTEMPTS = 4
+local MAX_LOCATION_REFRESH_ATTEMPTS = 10
+
+-- Every asynchronous navigation callback captures this epoch.  Cancellation
+-- advances it before stopping native work, so already-queued timers, whereis
+-- responses and exploration completions become harmless no-ops instead of
+-- reviving a route after its API lease was released.
+F2T_MAP_NAV_CANCEL_EPOCH = F2T_MAP_NAV_CANCEL_EPOCH or 0
+
+function f2t_map_navigation_current_epoch()
+    return F2T_MAP_NAV_CANCEL_EPOCH
+end
+
+function f2t_map_navigation_epoch_is_current(epoch)
+    return epoch == F2T_MAP_NAV_CANCEL_EPOCH
+end
+
+function f2t_map_navigation_cancel(reason)
+    F2T_MAP_NAV_CANCEL_EPOCH = F2T_MAP_NAV_CANCEL_EPOCH + 1
+    local stopped = false
+    if type(f2t_map_whereis_cancel) == "function" then
+        stopped = f2t_map_whereis_cancel() or stopped
+    end
+    if F2T_SPEEDWALK_ACTIVE and type(f2t_map_speedwalk_stop) == "function" then
+        stopped = f2t_map_speedwalk_stop() or stopped
+    end
+    if F2T_MAP_EXPLORE_STATE and F2T_MAP_EXPLORE_STATE.active
+        and type(f2t_map_explore_stop) == "function" then
+        f2t_map_explore_stop(reason or "Navigation cancelled")
+        stopped = true
+    end
+    if F2T_MAP_CIRCUIT_STATE and F2T_MAP_CIRCUIT_STATE.active
+        and type(f2t_map_circuit_stop) == "function" then
+        f2t_map_circuit_stop()
+        stopped = true
+    end
+    if type(f2t_map_brief_hold_release) == "function" then
+        f2t_map_brief_hold_release("nav")
+    end
+    return stopped
+end
 
 -- Did a navigate get us moving, or find us already standing there?
 function f2t_map_navigate_ok(status)
@@ -53,6 +93,7 @@ end
 
 function f2t_map_navigate(destination, opts)
     opts = opts or {}
+    local epoch = f2t_map_navigation_current_epoch()
 
     -- Settle the call: hand the caller a status and fire on_result once. The
     -- callback goes on the next tick so a synchronous outcome cannot re-enter
@@ -60,7 +101,11 @@ function f2t_map_navigate(destination, opts)
     local function settle(status)
         local callback = opts.on_result
         if callback then
-            tempTimer(0, function() callback(f2t_map_navigate_ok(status), status) end)
+            tempTimer(0, function()
+                if f2t_map_navigation_epoch_is_current(epoch) then
+                    callback(f2t_map_navigate_ok(status), status)
+                end
+            end)
         end
         return status
     end
@@ -72,6 +117,20 @@ function f2t_map_navigate(destination, opts)
     if not destination or destination == "" then
         cecho("\n<red>[map]<reset> No destination specified\n"); return settle("failed")
     end
+    if not F2T_MAP_CURRENT_ROOM_ID or not roomExists(F2T_MAP_CURRENT_ROOM_ID) then
+        opts._location_refresh_attempts = (opts._location_refresh_attempts or 0) + 1
+        if opts._location_refresh_attempts > MAX_LOCATION_REFRESH_ATTEMPTS then
+            cecho("\n<red>[map]<reset> Current location is still unknown after repeated 'look' requests\n")
+            return settle("failed")
+        end
+        f2t_map_ensure_current_location(function()
+            if f2t_map_navigation_epoch_is_current(epoch) then
+                f2t_map_navigate(destination, opts)
+            end
+        end)
+        return "pending"
+    end
+    opts._location_refresh_attempts = nil
     local target_id, error_msg, hint = f2t_map_resolve_location(destination)
     f2t_debug_log("[map/nav]   resolved to %s%s", f2t_map_describe_room(target_id),
         target_id and "" or string.format(" - %s, hint=%s", tostring(error_msg),
@@ -95,11 +154,6 @@ function f2t_map_navigate(destination, opts)
         end
         cecho(string.format("\n<red>[map]<reset> %s\n", error_msg or "Could not find destination"))
         return settle("failed")
-    end
-    -- A retry is already scheduled with the same opts, and it is the one that
-    -- settles: reporting a result here would fire on_result twice.
-    if not f2t_map_ensure_current_location(f2t_map_navigate, {destination, opts}) then
-        return "pending"
     end
     local current_room_id = F2T_MAP_CURRENT_ROOM_ID
     if current_room_id == target_id then
@@ -164,8 +218,9 @@ end
 -- someone who always answers yes stops being asked. Read at the point of use
 -- so a change in the settings tab takes effect on the next nav.
 local function confirmThen(destination, hint, error_msg, opts, run)
+    local epoch = f2t_map_navigation_current_epoch()
     if not opts.interactive or not f2t_settings_get("map", "nav_explore_confirm") then
-        run(opts)
+        if f2t_map_navigation_epoch_is_current(epoch) then run(opts) end
         return
     end
     local proceedOpts = {}
@@ -173,17 +228,22 @@ local function confirmThen(destination, hint, error_msg, opts, run)
     proceedOpts.interactive = nil
 
     f2tShowNavHintConfirm(destination, hint, error_msg,
-        function() run(proceedOpts) end,
         function()
+            if f2t_map_navigation_epoch_is_current(epoch) then run(proceedOpts) end
+        end,
+        function()
+            if not f2t_map_navigation_epoch_is_current(epoch) then return end
             cecho(string.format("\n<red>[map]<reset> %s\n", error_msg))
             if opts.on_result then opts.on_result(false, "failed") end
         end)
 end
 
 function f2t_map_navigate_handle_hint(destination, hint, error_msg, opts)
+    local epoch = f2t_map_navigation_current_epoch()
     if hint.kind == "whereis_pending" then
         cecho(string.format("\n<dim_grey>[map] Checking whereis for '%s'...<reset>\n", hint.name))
         f2t_map_whereis_lookup(hint.name, function(system_name)
+            if not f2t_map_navigation_epoch_is_current(epoch) then return end
             if system_name then
                 local system_hint = {kind = "system", name = system_name}
                 f2t_map_navigate_handle_hint(destination, system_hint, error_msg, opts)
@@ -216,6 +276,7 @@ end
 function f2t_map_navigate_explore_hint(destination, hint, opts)
     local settled = false
     local timer_id
+    local epoch = f2t_map_navigation_current_epoch()
 
     local explored = opts.explored or {}
     local linkWanted = nil
@@ -259,7 +320,7 @@ function f2t_map_navigate_explore_hint(destination, hint, opts)
         travelOnly and "link" or hint.kind, string.lower(hint.name or ""))
 
     local function finish(success, status)
-        if settled then return end
+        if settled or not f2t_map_navigation_epoch_is_current(epoch) then return end
         settled = true
         if timer_id then killTimer(timer_id); timer_id = nil end
         f2t_map_brief_hold_release("nav")
@@ -267,6 +328,7 @@ function f2t_map_navigate_explore_hint(destination, hint, opts)
     end
 
     local function on_complete()
+        if not f2t_map_navigation_epoch_is_current(epoch) then return end
         -- Hints stay live for the retry. Sweeping one scope routinely only
         -- earns the right to attempt the next - find the local link, then the
         -- destination system, then the planet - and `explored` below is what
@@ -275,10 +337,15 @@ function f2t_map_navigate_explore_hint(destination, hint, opts)
         local result = f2t_map_navigate(destination, {
             compensate_incomplete_map = opts.compensate_incomplete_map,
             compensate_attempt = (opts.compensate_attempt or 0) + 1,
+            interactive = opts.interactive,
             target_room_id = opts.target_room_id,
             explored = explored,
+            on_result = finish,
         })
-        finish(f2t_map_navigate_ok(result), result)
+        -- The retry owns settlement through the callback above.  In
+        -- particular, "pending" is an intermediate state, not a failure; a
+        -- later exploration leg will eventually call finish exactly once.
+        if result == "pending" then return end
     end
 
     if finishEarly then
@@ -313,13 +380,20 @@ function f2t_map_navigate_explore_hint(destination, hint, opts)
         local claimed = not F2T_MAP_EXPLORE_STATE.active
         if claimed then f2t_map_explore_claim_run("system") end
         local function travelDone(arrived)
+            if not f2t_map_navigation_epoch_is_current(epoch) then return end
             if claimed then f2t_map_explore_release_run() end
             if arrived then on_complete() else finish(false) end
         end
         f2t_map_explore_travel_to("system", hint.name,
             function() travelDone(true) end,
             function() travelDone(false) end)
-        timer_id = tempTimer(180, function() finish(false) end)
+        timer_id = tempTimer(180, function()
+            if not f2t_map_navigation_epoch_is_current(epoch) then return end
+            if claimed and F2T_MAP_EXPLORE_STATE and F2T_MAP_EXPLORE_STATE.active then
+                f2t_map_explore_stop("Navigation travel timed out")
+            end
+            finish(false, "failed")
+        end)
         return
     end
 
@@ -369,16 +443,22 @@ function f2t_map_navigate_explore_hint(destination, hint, opts)
         and string.format("Found %s's interstellar link - ending the sweep early", linkWanted)
         or "Route to the destination found - ending the sweep early"
     F2T_MAP_EXPLORE_STATE.on_stop_early = function()
-        if settled then return end
+        if settled or not f2t_map_navigation_epoch_is_current(epoch) then return end
         f2t_debug_log("[map/nav] explore: %s - swept enough",
             linkWanted and string.format("%s's interstellar link is mapped", linkWanted)
                 or string.format("'%s' now resolves to a reachable room", tostring(destination)))
         tempTimer(0.5, function()
-            if not settled then on_complete() end
+            if not settled and f2t_map_navigation_epoch_is_current(epoch) then on_complete() end
         end)
     end
 
-    timer_id = tempTimer(180, function() finish(false) end)
+    timer_id = tempTimer(180, function()
+        if not f2t_map_navigation_epoch_is_current(epoch) then return end
+        if F2T_MAP_EXPLORE_STATE and F2T_MAP_EXPLORE_STATE.active then
+            f2t_map_explore_stop("Navigation exploration timed out")
+        end
+        finish(false, "failed")
+    end)
 end
 
 -- ── Compensating for an incomplete map ──────────────────────────────────────
@@ -437,6 +517,7 @@ end
 -- (f2t_map_navigate_handle_hint), scoped to just that planet's own area
 -- rather than sweeping the whole system.
 function f2t_map_navigate_reach_system(destination, target_id, system_name, opts)
+    local epoch = f2t_map_navigation_current_epoch()
     local current_room_id = F2T_MAP_CURRENT_ROOM_ID
     local link_room = f2t_map_find_link_room_in_system(system_name)
     f2t_debug_log("[map/nav] reach_system(%s): link room %s, standing in %s", tostring(system_name),
@@ -455,6 +536,7 @@ function f2t_map_navigate_reach_system(destination, target_id, system_name, opts
         system_name))
     doSpeedWalk()
     local function poll()
+        if not f2t_map_navigation_epoch_is_current(epoch) then return end
         if F2T_SPEEDWALK_ACTIVE then
             tempTimer(0.5, poll)
             return
@@ -482,6 +564,7 @@ end
 -- Ask whereis purely for the system's name, then hand off to the same
 -- confirm-then-explore flow as any other unmapped destination.
 function f2t_map_navigate_whereis_for_system(destination, target_id, opts)
+    local epoch = f2t_map_navigation_current_epoch()
     -- whereis takes a bare planet name and nothing else. "mars exchange", a
     -- room id or a room hash would just draw the not-found line, which reads
     -- back as "no such place" and abandons a destination already resolved to a
@@ -495,6 +578,7 @@ function f2t_map_navigate_whereis_for_system(destination, target_id, opts)
     cecho(string.format(
         "\n<dim_grey>[map] No mapped route yet - checking whereis for '%s'...<reset>\n", place))
     f2t_map_whereis_lookup(place, function(system_name)
+        if not f2t_map_navigation_epoch_is_current(epoch) then return end
         if not system_name then
             cecho("\n<red>[map]<reset> No path found to destination\n")
             if opts.on_result then opts.on_result(false, "failed") end
