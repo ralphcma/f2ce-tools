@@ -25,6 +25,12 @@ local function has_stub_in_direction(room_id, direction)
     return false
 end
 
+local function existing_exit_matches_hash(room_id, direction, expected_hash)
+    local destination = get_existing_exit(room_id, direction)
+    if not destination then return nil, false end
+    return destination, f2t_map_generate_hash_from_room(destination) == expected_hash
+end
+
 function f2t_map_process_exits(current_room_id, gmcp_exits, gmcp_room_data)
     if not current_room_id or not roomExists(current_room_id) then return end
     if not gmcp_exits then return end
@@ -36,6 +42,22 @@ function f2t_map_process_exits(current_room_id, gmcp_exits, gmcp_room_data)
         seen_directions[direction] = true
         local dest_hash = string.format("%s.%s.%d", gmcp_room_data.system, gmcp_room_data.area, fed2_num)
         local dest_room_id = f2t_map_get_room_by_hash(dest_hash)
+
+        -- A rebuilt system can reuse a direction for a newly-numbered room.
+        -- In that case an imported map may still have (for example) `up`
+        -- connected to the old orbit while live GMCP says `up:101`. Leaving
+        -- that stale edge in place prevents exploration from creating a stub
+        -- and the new orbit is never visited. Trust the live destination:
+        -- retain an exact userdata/hash match if Mudlet's hash index missed
+        -- it, otherwise remove the stale edge so it can be rediscovered.
+        if not dest_room_id then
+            local existing, matches = existing_exit_matches_hash(current_room_id, direction, dest_hash)
+            if matches then
+                dest_room_id = existing
+            elseif existing then
+                setExit(current_room_id, -1, f2t_map_direction_to_number(direction))
+            end
+        end
 
         if dest_room_id then
             local existing_exit = get_existing_exit(current_room_id, direction)
@@ -160,14 +182,28 @@ function f2t_map_reconcile_cached_exits()
                     local direction_number = direction and f2t_map_direction_to_number(direction)
                     local destination = fed2_num and f2t_map_get_room_by_hash(
                         string.format("%s.%s.%s", system, area, fed2_num))
-                    if direction_number and destination then
+                    if direction_number then
                         local existing = get_existing_exit(room_id, direction)
-                        if tonumber(existing) ~= tonumber(destination) then
-                            setExit(room_id, destination, direction_number)
-                            repaired = repaired + 1
-                        end
-                        if has_stub_in_direction(room_id, direction) then
-                            setExitStub(room_id, direction_number, false)
+                        if destination then
+                            if tonumber(existing) ~= tonumber(destination) then
+                                setExit(room_id, destination, direction_number)
+                                repaired = repaired + 1
+                            end
+                            if has_stub_in_direction(room_id, direction) then
+                                setExitStub(room_id, direction_number, false)
+                            end
+                        else
+                            local expected_hash = string.format("%s.%s.%s", system, area, fed2_num)
+                            local _, matches = existing_exit_matches_hash(room_id, direction, expected_hash)
+                            if existing and not matches then
+                                setExit(room_id, -1, direction_number)
+                                existing = nil
+                                repaired = repaired + 1
+                            end
+                            if not existing and not has_stub_in_direction(room_id, direction) then
+                                setExitStub(room_id, direction_number, true)
+                                repaired = repaired + 1
+                            end
                         end
                     end
                 end

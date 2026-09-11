@@ -161,6 +161,18 @@ planet even when that room was already present or visited. Planet-name casing
 differences and missing cached orbit userdata are recovered from authoritative
 live GMCP before Phase 2 attempts to land.
 
+Candidate `native-ew19` also repairs a rebuilt-system edge whose direction is
+still connected to an old numbered room while cached/live `fed2_exits` names a
+new number. The stale edge is removed and becomes a frontier stub, allowing
+`map explore` to traverse and learn the replacement orbit. This is based on the
+provided map export, where Lyra's `up:101` was still wired to room number 100.
+
+The same candidate restores counted commodity transfers used by native hauling:
+fill-hold buying sends one `buy <commodity> <free bays>`, and a complete
+single-commodity hold sends one `sell cargo`. Normal per-bay server replies are
+counted to preserve the existing callback contract; partial/mixed sales remain
+bounded to `sell <commodity> <amount>`.
+
 **Refresh is read-only and works while OFF**. It does not make an applicable
 plan or authorize writes. Incomplete or wrong-planet responses retain the last
 valid table with an error. Preview still requires ON, captures production too,

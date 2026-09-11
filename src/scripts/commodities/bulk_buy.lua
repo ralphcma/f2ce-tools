@@ -81,6 +81,7 @@ function f2t_bulk_buy_start(commodity, requested_lots, callback)
     F2T_BULK_STATE.remaining = lots_to_buy
     F2T_BULK_STATE.total = lots_to_buy
     F2T_BULK_STATE.callback = callback
+    F2T_BULK_STATE.batched = true
 
     -- Only show user feedback in user mode
     if not callback then
@@ -104,8 +105,11 @@ function f2t_bulk_buy_next()
         return
     end
 
-    f2t_debug_log("[bulk-buy] Sending buy command (%d remaining)", F2T_BULK_STATE.remaining)
-    send(string.format("buy %s", string.lower(F2T_BULK_STATE.commodity)), false)
+    local command = string.format("buy %s %d",
+        string.lower(F2T_BULK_STATE.commodity), F2T_BULK_STATE.remaining)
+    F2T_BULK_STATE.sent_command = command
+    f2t_debug_log("[bulk-buy] Sending counted command: %s", command)
+    send(command, false)
     f2t_bulk_watchdog_start()
 end
 
@@ -133,8 +137,9 @@ function f2t_bulk_buy_success()
         end
         f2t_bulk_buy_finish()
     elseif F2T_BULK_STATE.remaining > 0 then
-        -- Continue buying
-        f2t_bulk_buy_next()
+        -- A counted buy produces one success line per bay. Keep waiting for
+        -- the remaining replies; sending again here would duplicate buys.
+        f2t_bulk_watchdog_start()
     else
         -- Done with requested amount
         f2t_bulk_buy_finish()
@@ -179,6 +184,8 @@ function f2t_bulk_buy_finish()
     F2T_BULK_STATE.active = false
     F2T_BULK_STATE.command = nil
     F2T_BULK_STATE.callback = nil
+    F2T_BULK_STATE.batched = false
+    F2T_BULK_STATE.sent_command = nil
 
     -- User mode: show formatted output
     if not callback then

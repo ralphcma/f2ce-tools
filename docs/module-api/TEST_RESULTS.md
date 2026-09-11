@@ -1,5 +1,33 @@
 # Module API verification
 
+## 2026-09-11 Rebuilt-orbit repair and counted hauling commands
+
+Candidate: `f2ce-tools-3.3.0-native-ew19.mpackage`; Walker
+3.4.0-native.12 and API 1.2.0-candidate.3 are unchanged.
+
+SHA-256: `f62455cd9e5ab47a2a2fb5f3b5928fbed3634271c77650d9bbdcdc0314204f2b`.
+
+The supplied map export exposed an exact rebuilt-system failure: live Lyra
+userdata advertised `up:101,down:100`, but both saved exits still led to old
+room 100. Because the stale `up` edge occupied the direction, exploration
+could not create the missing stub and never visited the new orbit. Cached and
+live exit reconciliation now remove a destination whose stored room hash
+disagrees with authoritative exit userdata, create the correct stub, and
+connect it when the new orbit is discovered. Correct non-compass edges remain
+unchanged.
+
+Native bulk hauling now transmits one counted `buy <commodity> <bays>` command.
+A complete single-commodity hold uses `sell cargo`; bounded partial or mixed
+sales use `sell <commodity> <count>`. Normal per-bay server replies are counted
+without sending duplicate commands.
+
+Source and exact-package verification pass all 100 native groups: API 23,
+adapter 5, Walker 30, bulk hauling 3, startup 7, topology 8, map lifecycle 1,
+Galaxy lifecycle 7, non-compass orbit discovery 5, and navigation resilience
+11. All 253 Lua syntax checks, 32 metadata checks, and 221 packaged-script
+comparisons pass. No profile was modified and no package was installed, pushed,
+or released.
+
 ## 2026-09-11 Non-compass orbit discovery
 
 Candidate: `f2ce-tools-3.3.0-native-ew18.mpackage`; Walker

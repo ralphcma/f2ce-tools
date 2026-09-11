@@ -23,6 +23,7 @@ try {
             @('tests/api/run.lua', "$SourceRoot/src/scripts/api/v1.lua"),
             @('tests/api/native_adapter_run.lua', "$SourceRoot/src/scripts/api/v1.lua", "$SourceRoot/src/scripts/api/adapter.lua"),
             @('tests/exchange_walker/run.lua', $SourceRoot),
+            @('tests/commodities/bulk_counted_run.lua', $SourceRoot),
             @('tests/map/startup_topology_sync_run.lua', "$SourceRoot/src/scripts/map/events.lua"),
             @('tests/map/topology_capture_safety_run.lua', "$SourceRoot/src/scripts/map/topology_capture.lua"),
             @('tests/map/content_lifecycle_run.lua', "$SourceRoot/src/scripts/ui/content/map.lua"),

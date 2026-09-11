@@ -34,6 +34,9 @@ F2T_BULK_STATE = {
     remaining = 0,       -- Number of operations remaining
     total     = 0,       -- Total operations requested
     callback  = nil,     -- Callback function for programmatic mode
+    batched   = false,   -- One counted server command is in flight
+    sent_command = nil,  -- Exact bounded command used by the watchdog
+    sell_all_cargo = false,
 
     -- Sell tracking (for margin calculation)
     total_cost    = 0,   -- Total cost of cargo being sold
@@ -66,8 +69,10 @@ function f2t_bulk_watchdog_start()
             return
         end
 
-        local reason = string.format("No recognised response to '%s %s' after %d seconds",
-            command, string.lower(F2T_BULK_STATE.commodity or "?"), F2T_BULK_WATCHDOG_SECONDS)
+        local attempted = F2T_BULK_STATE.sent_command
+            or string.format("%s %s", command, string.lower(F2T_BULK_STATE.commodity or "?"))
+        local reason = string.format("No recognised response to '%s' after %d seconds",
+            attempted, F2T_BULK_WATCHDOG_SECONDS)
         f2t_debug_log("[bulk] Watchdog fired: %s", reason)
         cecho(string.format("\n<yellow>[bulk-%s]<reset> %s, aborting\n", command, reason))
 

@@ -26,6 +26,10 @@ local rooms = {
         fed2_num="1",fed2_exits="e:2"}, exits={}, stubs={4}},
     [201] = {name="Cached target", area=30, data={fed2_system="Cache",fed2_area="Cache",
         fed2_num="2"}, exits={}},
+    [210] = {name="Lyra link", area=31, data={fed2_system="Lyra",fed2_area="Lyra Space",
+        fed2_num="460",fed2_exits="up:101,down:100"}, exits={up=211,down=211}, stubs={}},
+    [211] = {name="Old Pongaponga orbit", area=31, data={fed2_system="Lyra",fed2_area="Lyra Space",
+        fed2_num="100",fed2_planet="Pongaponga",fed2_flag_orbit="true"}, exits={}},
     [300] = {name="Old duplicate orbit", area=40, data={fed2_system="DupSys",fed2_area="Dup Space",
         fed2_num="10",fed2_planet="Dup",fed2_flag_orbit="true"}, exits={}},
     [301] = {name="Live duplicate orbit", area=40, data={fed2_system="DupSys",fed2_area="Dup Space",
@@ -36,7 +40,7 @@ local rooms = {
 }
 local specials = {[100]={board=101}, [102]={board=100}, [301]={board=302}, [302]={board=301}}
 local area_names = {[1]="Start",[10]="Stellar Space",[20]="Wayward",[30]="Cache",
-    [40]="Dup Space",[50]="Dup"}
+    [31]="Lyra Space",[40]="Dup Space",[50]="Dup"}
 local area_ids = {}; for id, name in pairs(area_names) do area_ids[name:lower()] = id end
 local direction_number = {north=1,northeast=2,northwest=3,east=4,west=5,south=6,
     southeast=7,southwest=8,up=9,down=10,["in"]=11,out=12,
@@ -67,6 +71,11 @@ function setExitStub(id, number, enabled)
     for _, existing in ipairs(rooms[id].stubs or {}) do if existing ~= number then result[#result+1]=existing end end
     if enabled then result[#result+1]=number end
     rooms[id].stubs=result
+end
+function connectExitStub(id, number, destination)
+    setExit(id, destination, number)
+    setExitStub(id, number, false)
+    return true
 end
 function getSpecialExitsSwap(id) return specials[id] or {} end
 function getSpecialExits(id)
@@ -141,9 +150,27 @@ function tests.import_reconciliation_repairs_known_stubs_and_board_targets()
     check(regular >= 1,"cached regular exit was not repaired")
     equal(rooms[200].exits.east,201,"cached regular destination")
     equal(#rooms[200].stubs,0,"resolved stub count")
+    equal(rooms[210].exits.up,nil,"stale rebuilt-system edge removed")
+    check((function()
+        for _, direction in pairs(rooms[210].stubs or {}) do
+            if direction == 9 then return true end
+        end
+        return false
+    end)(),"missing rebuilt-system orbit becomes an up stub")
+    equal(rooms[210].exits.down,211,"still-correct noncompass edge retained")
     equal(boards,1,"board repair count")
     equal(specials[100].board,102,"orbit board destination")
     equal(getRoomUserData(100,"fed2_board_actual_hash"),"Stellar.Wayward.396","learned board hash")
+end
+
+function tests.live_gmcp_connects_rebuilt_noncompass_orbit_after_discovery()
+    rooms[212]={name="New Kautoki orbit",area=31,data={fed2_system="Lyra",fed2_area="Lyra Space",
+        fed2_num="101",fed2_planet="Kautoki",fed2_flag_orbit="true"},exits={}}
+    f2t_map_process_exits(210,{up=101,down=100},{system="Lyra",area="Lyra Space",num=460})
+    equal(rooms[210].exits.up,212,"live rebuilt-system orbit destination")
+    for _, direction in pairs(rooms[210].stubs or {}) do
+        check(direction ~= 9,"resolved rebuilt-system stub retained")
+    end
 end
 
 function tests.learned_board_endpoint_survives_bad_gmcp_hash()

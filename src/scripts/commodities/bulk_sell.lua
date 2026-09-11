@@ -117,6 +117,8 @@ function f2t_bulk_sell_start(commodity, requested_lots, callback)
         F2T_BULK_STATE.queue_index = 1
         F2T_BULK_STATE.total_sold = 0
         F2T_BULK_STATE.callback = callback
+        F2T_BULK_STATE.batched = true
+        F2T_BULK_STATE.sell_all_cargo = #all_commodities == 1
         -- Aggregate stats across all commodities
         F2T_BULK_STATE.aggregate_cost = 0
         F2T_BULK_STATE.aggregate_revenue = 0
@@ -164,6 +166,8 @@ function f2t_bulk_sell_start(commodity, requested_lots, callback)
     F2T_BULK_STATE.total = lots_to_sell
     F2T_BULK_STATE.commodity_queue = nil
     F2T_BULK_STATE.callback = callback
+    F2T_BULK_STATE.batched = true
+    F2T_BULK_STATE.sell_all_cargo = lots_to_sell == #(gmcp.char.ship.cargo or {})
     F2T_BULK_STATE.total_cost = total_cost
     F2T_BULK_STATE.total_revenue = 0
     F2T_BULK_STATE.lots_sold = 0
@@ -230,8 +234,18 @@ function f2t_bulk_sell_next()
         return
     end
 
-    f2t_debug_log("[bulk-sell] Sending sell command (%d remaining)", F2T_BULK_STATE.remaining)
-    send(string.format("sell %s", string.lower(F2T_BULK_STATE.commodity)), false)
+    local command
+    if F2T_BULK_STATE.sell_all_cargo then
+        -- Premium/automated hauling carries one commodity at a time. Use the
+        -- server's all-cargo command and count its normal per-bay replies.
+        command = "sell cargo"
+    else
+        command = string.format("sell %s %d",
+            string.lower(F2T_BULK_STATE.commodity), F2T_BULK_STATE.remaining)
+    end
+    F2T_BULK_STATE.sent_command = command
+    f2t_debug_log("[bulk-sell] Sending counted command: %s", command)
+    send(command, false)
     f2t_bulk_watchdog_start()
 end
 
@@ -262,8 +276,9 @@ function f2t_bulk_sell_success(_commodity, revenue_per_ton, revenue_total)
     end
 
     if F2T_BULK_STATE.remaining > 0 then
-        -- Continue selling current commodity
-        f2t_bulk_sell_next()
+        -- A counted sell produces one success line per bay. Keep waiting for
+        -- the remaining replies; sending again here would duplicate sales.
+        f2t_bulk_watchdog_start()
     else
         -- Done with current commodity
         if F2T_BULK_STATE.commodity_queue then
@@ -334,6 +349,9 @@ function f2t_bulk_sell_finish()
     F2T_BULK_STATE.active = false
     F2T_BULK_STATE.command = nil
     F2T_BULK_STATE.callback = nil
+    F2T_BULK_STATE.batched = false
+    F2T_BULK_STATE.sent_command = nil
+    F2T_BULK_STATE.sell_all_cargo = false
     F2T_BULK_STATE.total_cost = 0
     F2T_BULK_STATE.total_revenue = 0
     F2T_BULK_STATE.lots_sold = 0
@@ -416,6 +434,9 @@ function f2t_bulk_sell_finish_all()
     F2T_BULK_STATE.command = nil
     F2T_BULK_STATE.commodity_queue = nil
     F2T_BULK_STATE.callback = nil
+    F2T_BULK_STATE.batched = false
+    F2T_BULK_STATE.sent_command = nil
+    F2T_BULK_STATE.sell_all_cargo = false
     F2T_BULK_STATE.aggregate_cost = 0
     F2T_BULK_STATE.aggregate_revenue = 0
     F2T_BULK_STATE.aggregate_lots_sold = 0
