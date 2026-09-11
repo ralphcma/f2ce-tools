@@ -2,18 +2,44 @@
 
 local DIRECTION_COMMANDS = {
     [1]="n",[2]="ne",[3]="nw",[4]="e",[5]="w",[6]="s",[7]="se",[8]="sw",
-    [9]="u",[10]="d",[11]="in",[12]="out",
+    -- Mudlet exposes these two keys from getRoomExits() as "up" and
+    -- "down".  Keeping the frontier command in that same canonical form
+    -- lets a discovered vertical edge be found again instead of looking
+    -- like a fresh stub forever.  Fed2 accepts the full command names.
+    [9]="up",[10]="down",[11]="in",[12]="out",
 }
+
+local DIRECTION_ALIASES = {
+    n={"n","north"}, ne={"ne","northeast"}, nw={"nw","northwest"},
+    e={"e","east"}, w={"w","west"}, s={"s","south"},
+    se={"se","southeast"}, sw={"sw","southwest"},
+    up={"up","u"}, down={"down","d"}, ["in"]={"in"}, out={"out"},
+}
+
+local function canonical_direction(direction)
+    if direction == "u" then return "up" end
+    if direction == "d" then return "down" end
+    return direction
+end
+
+local function mapped_destination(room_id, direction)
+    local exits = getRoomExits(room_id) or {}
+    local canonical = canonical_direction(direction)
+    for _, alias in ipairs(DIRECTION_ALIASES[canonical] or {canonical}) do
+        local destination = exits[alias]
+        if destination then return destination end
+    end
+    return nil
+end
 
 function f2t_map_explore_direction_number_to_name(dir_num)
     return DIRECTION_COMMANDS[dir_num]
 end
 
 function f2t_map_explore_is_exit_valid(room_id, direction)
+    direction = canonical_direction(direction)
     if hasExitLock(room_id, direction) then return false end
-    local exits = getRoomExits(room_id)
-    if not exits then return true end
-    local dest_id = exits[direction]
+    local dest_id = mapped_destination(room_id, direction)
     if not dest_id then return true end
     if roomLocked(dest_id) then return false end
     if F2T_MAP_EXPLORE_STATE.visited_rooms[dest_id] then return false end
@@ -95,7 +121,7 @@ function f2t_map_explore_recompute_frontier()
         local seeking_exchange =
             F2T_MAP_EXPLORE_STATE.brief_flags_set and F2T_MAP_EXPLORE_STATE.brief_flags_set["exchange"]
         if seeking_exchange and #candidates > 0 then
-            local direction_priority = {"e","n","sw","w","s","ne","nw","se","in","u","d","out"}
+            local direction_priority = {"e","n","sw","w","s","ne","nw","se","in","up","down","out"}
             local grouped = {}
             for _, dir in ipairs(direction_priority) do grouped[dir] = {} end
             for _, candidate in ipairs(candidates) do

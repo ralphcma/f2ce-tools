@@ -153,6 +153,14 @@ API consumers. Ownership covers the entire asynchronous operation, cancellation
 stops every nested navigation layer, stale copied edges are checked before send,
 and imported/live map evidence repairs legacy board and regular-exit defects.
 
+Candidate `native-ew18` closes the remaining system-exploration gap for planets
+whose orbit is reached through `in`, `out`, `up`, or `down`. Vertical frontier
+directions use Mudlet's canonical names, aliases remain compatible with older
+maps, and every live space arrival is checked idempotently for an expected
+planet even when that room was already present or visited. Planet-name casing
+differences and missing cached orbit userdata are recovered from authoritative
+live GMCP before Phase 2 attempts to land.
+
 **Refresh is read-only and works while OFF**. It does not make an applicable
 plan or authorize writes. Incomplete or wrong-planet responses retain the last
 valid table with an error. Preview still requires ON, captures production too,

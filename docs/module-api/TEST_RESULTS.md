@@ -1,5 +1,25 @@
 # Module API verification
 
+## 2026-09-11 Non-compass orbit discovery
+
+Candidate: `f2ce-tools-3.3.0-native-ew18.mpackage`; Walker
+3.4.0-native.12 and API 1.2.0-candidate.3 are unchanged.
+
+SHA-256: `bfbe4e4a8bd66bb2f3452540cda1587d0b6716dd7fb3dbbe7a30e318af9b4658`.
+
+System exploration now treats Mudlet's canonical `up` and `down` exit names
+consistently with `in` and `out`, while retaining aliases for imported maps.
+An already-mapped or duplicate arrival can no longer bypass expected-planet
+recognition merely because the orbit room was visited earlier. Expected planet
+names match case-insensitively, and an authoritative live GMCP orbit hash
+repairs missing orbit userdata before the planet-landing phase begins.
+
+Source and exact-package verification pass all 96 native groups: API 23,
+adapter 5, Walker 30, startup 7, topology 8, map lifecycle 1, Galaxy lifecycle
+7, non-compass orbit discovery 5, and navigation resilience 10. All 252 Lua
+syntax checks, 32 metadata checks, and 221 packaged-script comparisons pass.
+No profile was modified and no package was installed, pushed, or released.
+
 ## 2026-09-11 Native navigation resilience and map repair
 
 Candidate: `f2ce-tools-3.3.0-native-ew17.mpackage`; Walker

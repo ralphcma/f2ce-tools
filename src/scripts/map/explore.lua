@@ -1156,6 +1156,19 @@ function f2t_map_explore_on_room_change()
     F2T_MAP_EXPLORE_STATE.last_room_before_move    = nil
     F2T_MAP_EXPLORE_STATE.last_direction_attempted = nil
 
+    -- Orbit recognition is deliberately independent of first-visit state.
+    -- A live vertical/in/out transition may land in a room already present
+    -- in an imported map, or a duplicate GMCP arrival can mark it visited
+    -- before this layered system sweep observes it.  The helper de-duplicates
+    -- expected planets, so checking every space arrival is safe.
+    if F2T_MAP_EXPLORE_STATE.system_mode == "brief" and
+       F2T_MAP_EXPLORE_STATE.system_phase == "exploring_space" and
+       F2T_MAP_EXPLORE_STATE.phase == "navigating" then
+        f2t_map_explore_system_check_room_for_planets(current_room)
+        if F2T_MAP_EXPLORE_STATE.expected_planets_remaining and
+           F2T_MAP_EXPLORE_STATE.expected_planets_remaining == 0 then return end
+    end
+
     local is_first_visit = not F2T_MAP_EXPLORE_STATE.visited_rooms[current_room]
     if is_first_visit then
         F2T_MAP_EXPLORE_STATE.visited_rooms[current_room] = true
@@ -1169,14 +1182,6 @@ function f2t_map_explore_on_room_change()
         if F2T_MAP_EXPLORE_STATE.brief_flags_remaining_count and F2T_MAP_EXPLORE_STATE.phase == "navigating" then
             f2t_map_explore_brief_check_room_flags(current_room)
             if F2T_MAP_EXPLORE_STATE.brief_flags_remaining_count == 0 then return end
-        end
-
-        if F2T_MAP_EXPLORE_STATE.system_mode == "brief" and
-           F2T_MAP_EXPLORE_STATE.system_phase == "exploring_space" and
-           F2T_MAP_EXPLORE_STATE.phase == "navigating" then
-            f2t_map_explore_system_check_room_for_planets(current_room)
-            if F2T_MAP_EXPLORE_STATE.expected_planets_remaining and
-               F2T_MAP_EXPLORE_STATE.expected_planets_remaining == 0 then return end
         end
 
         if F2T_MAP_EXPLORE_STATE.phase == "navigating" and not F2T_MAP_EXPLORE_STATE.planned_exit then
