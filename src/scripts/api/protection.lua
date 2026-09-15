@@ -69,7 +69,19 @@ function Client:pause()
     if not ok or paused ~= true then return self:fail("client could not pause for stamina refill") end
     if not self:isOwned() then return false end
     if navigation_busy(API.navigation.environment()) then return self:fail("client did not release navigation for stamina refill") end
-    if API.commands._lease then return self:fail("unfinished command operation blocks stamina refill") end
+    local pending_command = API.commands._lease
+    if pending_command then
+        local may_drain, draining = pcall(self.spec.isSettlingCommands or function() return false end)
+        if pending_command.module_id ~= self.context.module_id or not may_drain or draining ~= true then
+            return self:fail("unfinished command operation blocks stamina refill")
+        end
+        -- An already-issued cargo command must finish, not be replayed or
+        -- abandoned while food navigation begins. Hold the same bounded gate
+        -- used for an outstanding movement receipt; never accept a new lease.
+        handoff = handoff or { polls = 0 }
+        handoff.command = pending_command
+        self.handoff = handoff
+    end
     if not handoff then return true end
     local function poll()
         if self.handoff ~= handoff then return end
@@ -77,14 +89,19 @@ function Client:pause()
         if not self:isOwned() or not S.live(self.context) or P.isRecovering()
             or navigation_busy(API.navigation.environment()) then return self:fail("authority changed while settling movement") end
         local arrived = API.data.receipt("room")
-        if arrived and arrived.generation > handoff.generation and arrived.room_id == handoff.expected
-            and API.navigation.environment().room_id == handoff.expected then
+        local current_command = API.commands._lease
+        if current_command and current_command ~= handoff.command then
+            return self:fail("command ownership changed while settling stamina handoff")
+        end
+        local movement_ready = not handoff.expected or (arrived and arrived.generation > handoff.generation
+            and arrived.room_id == handoff.expected and API.navigation.environment().room_id == handoff.expected)
+        if movement_ready and not current_command then
             self.handoff = nil
             API.events.emit("stamina.handoff_ready", { module_id = self.context.module_id })
             return
         end
         handoff.polls = handoff.polls + 1
-        if handoff.polls >= 200 then return self:fail("movement confirmation timed out before stamina refill (10 seconds)") end
+        if handoff.polls >= 200 then return self:fail("movement or cargo confirmation timed out before stamina refill (10 seconds)") end
         handoff.timer = API._adapter.timer(0.05, poll, false)
         if not handoff.timer then return self:fail("movement-settle timer unavailable") end
     end
