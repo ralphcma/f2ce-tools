@@ -86,6 +86,18 @@ function adapter.gmcpSnapshot(path)
     return clone(node)
 end
 
+function adapter.observeLine(callback)
+    if type(tempRegexTrigger) ~= "function" then return nil end
+    return tempRegexTrigger("^.*$", function() callback(line or "") end)
+end
+function adapter.unobserveLine(id)
+    if id and type(killTrigger) == "function" then killTrigger(id) end
+end
+function adapter.parseFactory(lines, number)
+    if type(f2t_factory_parse_display) ~= "function" then return nil, "native factory parser unavailable" end
+    return f2t_factory_parse_display(lines, number)
+end
+
 -- Use the native capture engine, not a temporary parser replacement. The
 -- callback itself is the ownership token: never reset someone else's capture.
 local exchange_callbacks = {}
@@ -149,6 +161,9 @@ function adapter.nativeCommandBlocker(owned_hauling_price)
     end
     if type(f2t_factory) == "table" and f2t_factory.capturing == true then
         return { kind = "factory_capture" }
+    end
+    if type(f2t_factory) == "table" and f2t_factory.flushing == true then
+        return { kind = "factory_flush" }
     end
     if type(f2t_po) == "table" and f2t_po.phase and f2t_po.phase ~= "idle" then
         return { kind = "planet_owner_capture", phase = tostring(f2t_po.phase) }

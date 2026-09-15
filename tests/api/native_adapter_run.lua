@@ -110,6 +110,9 @@ function tests.native_command_blockers()
     f2t_factory.capturing = true
     equal(adapter.nativeCommandBlocker().kind, "factory_capture")
     f2t_factory.capturing = false
+    f2t_factory.flushing = true
+    equal(adapter.nativeCommandBlocker().kind, "factory_flush")
+    f2t_factory.flushing = false
     equal(adapter.nativeCommandBlocker(), nil)
 end
 

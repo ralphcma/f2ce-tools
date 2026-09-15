@@ -11,7 +11,7 @@ if type(existing) == "table" and type(existing._reload) == "function" then
 end
 
 local API = {
-    _build = "1.2.0-candidate.3",
+    _build = "1.2.0-candidate.4",
     version = "1.2.0",
     f2ce_version = "unknown",
     capabilities = {},
@@ -729,6 +729,7 @@ local DATA_CHANNELS = {
     commodities = { path = {"exchange", "commodities"}, event = "data.commodities" },
     futures_market = { path = {"exchange", "futures"}, event = "data.futures_market" },
     futures_owned = { path = {"char", "futures"}, event = "data.futures_owned" },
+    company = { path = {"char", "company"}, event = "data.company" },
 }
 function data.get(channel)
     if not DATA_CHANNELS[channel] then return nil, api_error("E_DATA_CHANNEL", "unknown data channel", { channel = channel }) end
@@ -1003,6 +1004,9 @@ function API._install(adapter)
     capability("exchange.capture", type(adapter.exchangeCapture) == "function"
         and type(adapter.exchangeCancel) == "function", "serialized native PO capture")
     capability("exchange.settings", API.exchange ~= nil, "typed stockpile/spread commands")
+    capability("company.read", API.company ~= nil and type(adapter.observeLine) == "function"
+        and type(adapter.unobserveLine) == "function" and type(adapter.parseFactory) == "function",
+        "owner-bound company GMCP and bounded factory displays")
     capability("muxlet.content", adapter.muxletContentAvailable and adapter.muxletContentAvailable() or false,
         "UI content belongs in Mux.registerContent")
     if adapter.registerEvent then
@@ -1010,6 +1014,7 @@ function API._install(adapter)
             ["gmcp.room.info"] = { "room", navigation._tick }, ["gmcp.char.vitals"] = { "vitals" },
             ["gmcp.char.ship"] = { "ship", "cargo" }, ["gmcp.jobs.board"] = { "jobs_board" }, ["gmcp.char.job"] = { "job" },
             ["gmcp.exchange.commodities"] = { "commodities" }, ["gmcp.exchange.futures"] = { "futures_market" }, ["gmcp.char.futures"] = { "futures_owned" },
+            ["gmcp.char.company"] = { "company" },
         }
         API._adapter_tokens = API._adapter_tokens or {}
         for event_name, channels in pairs(bindings) do

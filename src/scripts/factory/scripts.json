@@ -1,5 +1,6 @@
 [
   {"name": "init"},
+  {"name": "display_parser"},
   {"name": "parser"},
   {"name": "formatter"},
   {"name": "capture_timer"},
