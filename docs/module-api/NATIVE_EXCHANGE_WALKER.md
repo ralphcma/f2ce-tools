@@ -12,6 +12,11 @@ source at `e7276b81f962b3c7e4c72c6b34a161e1d3415ba6`.
 
 ## Settings and defaults
 
+Native ew26 adds the read-only `company.system.read` capability for factory-site
+workforce/economy review. A complete `di system` report is fenced by company text
+and GMCP under one command lease. It does not start map capture/navigation or
+change saved layouts, Walker settings or default-OFF behavior. See `COMPANY_API.md`.
+
 Native ew25 adds a same-reservation built-in price delegation for FedHauler
 1.17.17. This lets ordinary exchange hauling retain system blacklist filtering
 without requiring galaxy-wide premium access or queuing behind its own request.

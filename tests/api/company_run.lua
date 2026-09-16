@@ -4,6 +4,7 @@ local root=arg[1] or "."
 dofile(root.."/src/scripts/api/v1.lua")
 dofile(root.."/src/scripts/api/services.lua")
 dofile(root.."/src/scripts/api/company.lua")
+dofile(root.."/src/scripts/api/company_system.lua")
 dofile(root.."/src/scripts/api/company_depot.lua")
 dofile(root.."/src/scripts/api/company_transfer.lua")
 dofile(root.."/src/scripts/factory/display_parser.lua")
@@ -385,6 +386,78 @@ test("depot workflow rejects changed reservation evidence and unexpected ship ca
     reset(); store_cargo(); o=options(); o.single_cargo=true
     h=assert(API.company.prepareTransfer(context,o,function(_,e) err=e end)); state_push(); depot_push(depot,2)
     code(err,"E_CARGO_SHIP"); equal(h:status().sent,false)
+end)
+local system_fixture=[[
+System information for the Serenity system:
+  Member of the Zork cartel
+  Member of the Zork syndicate
+Holland, Serenity system, Zork cartel, Zork syndicate
+  Owner: Magnate Example
+  Economy: Leisure    Workers available: 2500/2500
+  Infrastructure built: 436
+  Shipyard markup: -10%
+  Approval rating: +63
+Denmark, Serenity system, Zork cartel, Zork syndicate
+  Closed to visitors
+  Owner: Magnate Example
+  Economy: Technical    Workers available: 0/1800
+Serenity Space, Serenity system, Zork cartel
+  Owner: Example
+  Economy: None
+]]
+test("system workforce parser joins wrapped headers and reads per-planet availability",function()
+    local text=system_fixture:gsub("Holland, Serenity system, Zork cartel","Holland, Serenity system,\n  Zork cartel")
+    local row=assert(API.company._parseSystem(text,"Serenity"))
+    equal(row.planets.holland.available,2500); equal(row.planets.holland.total,2500)
+    equal(row.planets.holland.economy,"Leisure"); equal(row.planets.denmark.available,0)
+    equal(row.planets.denmark.closed,true); equal(row.planets["serenity space"].available,nil)
+end)
+test("system parser rejects partial, duplicated, wrong-system and malformed worker evidence",function()
+    equal(API.company._parseSystem(system_fixture,"Elsewhere"),nil)
+    for _,text in ipairs({system_fixture:gsub("Workers available: 2500/2500","Workers available: 2501/2500"),
+        system_fixture:gsub("Workers available: 2500/2500","Workers available: 2500/2500x"),
+        system_fixture:gsub("Workers available: 2500/2500","Workers available: 2,500/2,500"),
+        system_fixture:gsub("Workers available: 2500/2500","Workers available: 2500/2500 Workers available: 1/2"),
+        system_fixture:gsub("Workers available: 2500/2500",""),system_fixture:gsub("Leisure","FutureTech"),
+        system_fixture:gsub("Denmark,","Holland,"),system_fixture:gsub("Denmark, Serenity","Denmark, Elsewhere")}) do
+        equal(API.company._parseSystem(text,"Serenity"),nil)
+    end
+end)
+for _,rank in ipairs({"Industrialist","Manufacturer"}) do
+test("system read holds lease through text and fresh owner fence at "..rank,function()
+    reset(rank); local value,calls=nil,0
+    local h=assert(API.company.system(context,"Serenity",function(v,e) assert(not e); value=v; calls=calls+1 end))
+    equal(mock.sent[1].command,"di system Serenity")
+    equal(mock.sent[2].command,rank=="Industrialist" and "di business" or "di company")
+    observer(system_fixture); equal(calls,0); assert(API.commands._lease)
+    fence(rank); equal(calls,0)
+    mock:fireEvent(rank=="Industrialist" and "gmcp.char.business" or "gmcp.char.company")
+    equal(calls,1); equal(value.planets.holland.available,2500); assert(value.captured_at)
+    equal(API.commands._lease,nil); equal(h:status().active,false); equal(observer,nil)
+end)
+end
+test("system read permits GMCP-before-text fence but never silence, unsafe names or late callbacks",function()
+    reset(); local calls=0; local value
+    assert(API.company.system(context,"Serenity",function(v,e) assert(not e); value=v; calls=calls+1 end))
+    mock:fireEvent("gmcp.char.company"); equal(calls,0)
+    observer(system_fixture); equal(calls,0); observer("Company Report for Sample Ltd:"); equal(calls,1); assert(value)
+    reset(); local err
+    local h=assert(API.company.system(context,"Serenity",function(_,e) err=e end)); local late=observer
+    late(system_fixture); mock:runTimers(); code(err,"E_COMPANY_TIMEOUT"); equal(API.commands._lease,nil)
+    late("Company Report for Sample Ltd:"); equal(#mock.sent,2)
+    local invalid,problem=API.company.system(context,"Serenity;quit",function() end)
+    equal(invalid,nil); code(problem,"E_ARGUMENT"); equal(#mock.sent,2); equal(h:status().active,false)
+end)
+test("system read cancellation, wrong owner and incomplete report release resources",function()
+    reset(); local calls=0
+    local h=assert(API.company.system(context,"Serenity",function() calls=calls+1 end)); local late=observer
+    h:cancel(); late(system_fixture); mock:runTimers(); equal(calls,0); equal(API.commands._lease,nil)
+    reset(); local err
+    assert(API.company.system(context,"Serenity",function(_,e) err=e end))
+    mock.gmcp.char.vitals.rank="Industrialist"; mock:fireEvent("gmcp.char.vitals"); mock:fireEvent("gmcp.char.company")
+    code(err,"E_COMPANY_IDENTITY"); equal(API.commands._lease,nil)
+    reset(); assert(API.company.system(context,"Serenity",function(_,e) err=e end))
+    observer("I don't know that system."); observer("Company Report for Sample Ltd:"); code(err,"E_SYSTEM_DISPLAY"); equal(API.commands._lease,nil)
 end)
 print(string.format("RESULT %d passed, %d failed",passed,failed))
 if failed>0 then os.exit(1) end

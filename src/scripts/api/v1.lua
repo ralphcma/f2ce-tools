@@ -1035,6 +1035,9 @@ function API._install(adapter)
     capability("company.read", API.company ~= nil and type(adapter.observeLine) == "function"
         and type(adapter.unobserveLine) == "function" and type(adapter.parseFactory) == "function",
         "owner-bound company GMCP and bounded factory displays")
+    capability("company.system.read", API.company ~= nil and type(API.company.system)=="function"
+        and type(adapter.observeLine)=="function" and type(adapter.unobserveLine)=="function",
+        "system workforce/economy snapshot with ordered company read fence")
     capability("company.depot.read", API.company ~= nil and type(API.company.depot) == "function"
         and type(adapter.observeLine) == "function" and type(adapter.unobserveLine) == "function"
         and type(adapter.parseDepot) == "function", "owner-bound depot display with ordered read fence")

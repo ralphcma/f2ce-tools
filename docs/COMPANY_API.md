@@ -1,5 +1,26 @@
 # Company inspection API (native-ew20)
 
+## System workforce inspection (native-ew26)
+
+Capability `company.system.read` exposes
+`API.company.system(context, systemName, callback)`, authorized as
+`company.system.inspect` with `{system=systemName}`. It holds one command lease
+across `di system <systemName>` and the rank's `di business` / `di company`.
+Both the matching report text and fresh owner-bound GMCP must arrive before
+completion. Silence is never successful completion; timeout is 15 seconds.
+Cancel/disconnect/unload remove observers, timers and the lease before callback.
+
+The result is `{system, captured_at, planets}` keyed by lowercase planet name.
+Each entry has `planet`, `system`, `economy`, `available`, `total`, and `closed`.
+Economy None has no workforce values. Parse rejects missing/duplicate workers,
+unknown economies, impossible counts, conflicting identities and partial
+reports. Validates all planets in the response, with a 256-planet / 128KiB bound.
+Additional infrastructure/approval fields are not interpreted. This read does
+not use/enable navigation's capture flags, explore, gag output, or reserve labour.
+Available workers are a snapshot, not a hiring guarantee or build permission.
+
+## Original inspection contract
+
 `F2CE.API.v1` 1.2.0 candidate.4 adds `company.read` and the `company` GMCP
 channel (`char.company`, `data.company`). This is read-only groundwork, not
 an autonomous company manager or an upstream-approved release.
