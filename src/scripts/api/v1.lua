@@ -1015,6 +1015,8 @@ function API._install(adapter)
         and type(adapter.parseDepot) == "function", "owner-bound depot display with ordered read fence")
     capability("company.depot.transfer", API.company ~= nil and type(API.company.prepareTransfer)=="function",
         "single-bay preview/confirm with ship, depot and cash reconciliation")
+    capability("company.cargo.transfer", API.company ~= nil and type(API.company.prepareCargo)=="function",
+        "single-bay market preview/confirm with fresh GMCP and exact cargo/cash reconciliation")
     capability("muxlet.content", adapter.muxletContentAvailable and adapter.muxletContentAvailable() or false,
         "UI content belongs in Mux.registerContent")
     if adapter.registerEvent then

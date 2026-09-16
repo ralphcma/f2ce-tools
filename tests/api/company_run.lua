@@ -312,5 +312,79 @@ test("disconnect after sending leaves an uncertain outcome and cannot replay",fu
     API._reconnectReset("disconnect"); equal(h:status().phase,"unconfirmed"); equal(h:status().uncertain,true)
     local n=#mock.sent; state_push(); mock:runTimers(); equal(#mock.sent,n); equal(API.commands._lease,nil)
 end)
+test("exact ambient exchange ticker does not contaminate depot rows",function()
+    reset(); local result,err
+    assert(API.company.depot(context,"Example World",function(v,e) result,err=v,e end))
+    observer("+++ The exchange display shows the prices for Alloys +++")
+    observer("+++ Exchange has 10000 tons for sale +++")
+    observer("+++ Offer price is 145ig/ton for first 75 tons +++")
+    observer("+++ Exchange will buy 75 tons at 125ig/ton +++")
+    depot_push(depot,2); assert(result,tostring(err)); equal(result.used_bays,2)
+    reset(); assert(API.company.depot(context,"Example World",function(_,e) err=e end))
+    observer("+++ unknown output +++"); observer(depot); observer("Company Report for Sample Ltd:"); code(err,"E_DEPOT_DISPLAY")
+end)
+local function market_push(rank)
+    state_push(); mock:fireEvent("gmcp.exchange.commodities"); mock:fireEvent(rank=="Industrialist" and "gmcp.char.business" or "gmcp.char.company")
+end
+local function market_options(side)
+    return {side=side,planet="Example World",commodity="Semiconductors",personal_reserve=100000,
+        company_reserve=1000000,price_limit=side=="buy" and 300 or 500,single_cargo=true}
+end
+for _,rank in ipairs({"Industrialist","Manufacturer"}) do
+for _,side in ipairs({"buy","sell"}) do
+test(rank.." market "..side.." requires fresh quote and exactly reconciles one bay",function()
+    reset(rank); if side=="sell" then store_cargo() end
+    mock.gmcp.exchange={commodities={Semiconductors={stock=5000,sell=300,buy=500}}}
+    local proposal,result,err
+    local h=assert(API.company.prepareCargo(context,market_options(side),function(v,e) proposal,err=v,e end))
+    state_push(); equal(proposal,nil); mock:fireEvent("gmcp.exchange.commodities"); equal(proposal,nil)
+    mock:fireEvent(rank=="Industrialist" and "gmcp.char.business" or "gmcp.char.company")
+    assert(proposal,tostring(err)); equal(#mock.sent,3)
+    equal(mock.sent[1].command,"score"); equal(mock.sent[2].command,"look")
+    equal(mock.sent[3].command,rank=="Industrialist" and "di business" or "di company")
+    assert(h:confirm(function(v,e) result,err=v,e end)); market_push(rank)
+    equal(mock.sent[7].command,side.." Semiconductors 1")
+    if side=="buy" then
+        mock.gmcp.char.ship.cargo={{commodity="Semiconductors",cost=300,origin="Example World"}}; mock.gmcp.char.ship.hold.cur=75
+        mock.gmcp.char.vitals.cash="977500"
+    else mock.gmcp.char.ship.cargo={}; mock.gmcp.char.ship.hold.cur=150; mock.gmcp.char.vitals.cash="1037500" end
+    market_push(rank); assert(result,tostring(err)); equal(h:status().phase,"confirmed"); equal(API.commands._lease,nil)
+    equal(h:confirm(function() end),nil)
+end)
+end
+end
+test("market bounds refuse inadequate input stock, bid, cash and mixed cargo",function()
+    for _,case in ipairs({"stock","ask","bid","personal","company","mixed","space","origin"}) do
+        reset(); local side=(case=="bid" or case=="mixed" or case=="origin") and "sell" or "buy"
+        if side=="sell" then store_cargo() end
+        mock.gmcp.exchange={commodities={Semiconductors={stock=5000,sell=300,buy=500}}}
+        local row=mock.gmcp.exchange.commodities.Semiconductors
+        if case=="stock" then row.stock=4999 elseif case=="ask" then row.sell=301 elseif case=="bid" then row.buy=499 end
+        local o=market_options(side)
+        if case=="personal" then o.personal_reserve=1000000 elseif case=="company" then o.company_reserve=7000000 end
+        if case=="mixed" then mock.gmcp.char.ship.cargo[2]={commodity="Parts",origin="Home",cost=1}; mock.gmcp.char.ship.hold.cur=0 end
+        if case=="origin" then mock.gmcp.char.ship.cargo[1].origin="example world" end
+        local err; local h=assert(API.company.prepareCargo(context,o,function(_,e) err=e end))
+        if case=="space" then mock.gmcp.room.info.flags={"space"} end
+        market_push(); assert(err,case); equal(h:status().sent,false); equal(API.commands._lease,nil)
+    end
+end)
+test("market reprices before confirmation and refuses an uncertain cash delta without retry",function()
+    reset(); mock.gmcp.exchange={commodities={Semiconductors={stock=5000,sell=300,buy=500}}}
+    local err; local h=assert(API.company.prepareCargo(context,market_options("buy"),function() end)); market_push()
+    assert(h:confirm(function(_,e) err=e end)); mock.gmcp.exchange.commodities.Semiconductors.sell=301; market_push()
+    code(err,"E_CARGO_MARKET"); equal(h:status().sent,false)
+    local o=market_options("buy"); o.price_limit=301
+    h=assert(API.company.prepareCargo(context,o,function() end)); market_push(); assert(h:confirm(function(_,e) err=e end)); market_push()
+    market_push(); code(err,"E_DEPOT_UNCONFIRMED"); local n=#mock.sent; mock:runTimers(); equal(#mock.sent,n)
+end)
+test("depot workflow rejects changed reservation evidence and unexpected ship cargo",function()
+    reset(); local o=options(); o.expected_depot={}; local err
+    local h=assert(API.company.prepareTransfer(context,o,function(_,e) err=e end)); state_push(); depot_push(depot,2)
+    code(err,"E_DEPOT_CHANGED"); equal(h:status().sent,false)
+    reset(); store_cargo(); o=options(); o.single_cargo=true
+    h=assert(API.company.prepareTransfer(context,o,function(_,e) err=e end)); state_push(); depot_push(depot,2)
+    code(err,"E_CARGO_SHIP"); equal(h:status().sent,false)
+end)
 print(string.format("RESULT %d passed, %d failed",passed,failed))
 if failed>0 then os.exit(1) end

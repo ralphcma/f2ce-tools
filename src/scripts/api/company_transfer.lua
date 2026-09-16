@@ -1,5 +1,5 @@
 -- Explicit single-bay operations only. No navigation, retry, factory flush,
--- purchase or implicit start. Private closures retain the authorized preview.
+-- construction or implicit start. Private closures retain the authorized preview.
 local API,S=F2CE.API.v1,F2CE.API.v1.services
 local function integer(n,lo,hi)
     n=tonumber(n); return n and n==math.floor(n) and n>=lo and n<=hi and n or nil
@@ -62,13 +62,42 @@ local function select_cargo(state,options)
     end
 end
 local function ready(state,options)
-    local c=select_cargo(state,options)
+    local market=options.side=="buy" or options.side=="sell"
+    local c,price
+    if market then
+        local exchange=false
+        for k,v in pairs((API.data.get("room") or {}).flags or {}) do if v=="exchange" or (k=="exchange" and v==true) then exchange=true end end
+        if not exchange then return nil,S.error("E_CARGO_LOCATION","local exchange required") end
+        local row,name
+        for key,value in pairs(state.market or {}) do if norm(key)==norm(options.commodity) then row,name=value,key end end
+        if type(row)~="table" then return nil,S.error("E_CARGO_MARKET","commodity absent from fresh local market") end
+        price=integer(options.side=="buy" and row.sell or row.buy,1,1000000)
+        if not price or (options.side=="buy" and (not integer(row.stock,5000,1000000000) or price>options.price_limit))
+            or (options.side=="sell" and price<options.price_limit) then
+            return nil,S.error("E_CARGO_MARKET","price bound or 5000-ton saleable input floor not met")
+        end
+        if options.side=="buy" then
+            if #state.ship.cargo~=0 or state.ship.hold.cur<75 then return nil,S.error("E_CARGO_SHIP","empty ship with one free bay required") end
+            c={commodity=name,origin=options.planet,cost=price}
+        else
+            c=state.ship.cargo[1]
+            if #state.ship.cargo~=1 or norm(c.commodity)~=norm(options.commodity) then return nil,S.error("E_CARGO_SHIP","exactly one matching ordinary cargo bay required") end
+            -- Legacy GMCP does not prove a factory-produced, unbonded exception.
+            if norm(c.origin)==norm(options.planet) then return nil,S.error("E_CARGO_ORIGIN","cannot prove this cargo may be sold at its planet of origin") end
+        end
+    else c=select_cargo(state,options) end
     if not c then return nil,S.error("E_DEPOT_CARGO","requested cargo is absent") end
-    local cost=(c.cost_per_ton or c.cost)*75
+    if options.single_cargo and #state.ship.cargo~=((options.side=="buy" or options.side=="fetch") and 0 or 1) then
+        return nil,S.error("E_CARGO_SHIP","ship does not match the single-bay workflow")
+    end
+    if not market and options.expected_depot and not equal(state.depot.bays,options.expected_depot) then
+        return nil,S.error("E_DEPOT_CHANGED","depot changed since factory reservation checks")
+    end
+    local cost=(price or c.cost_per_ton or c.cost)*75
     if options.side=="store" and state.depot.free_bays<1 then return nil,S.error("E_DEPOT_FULL","depot has no free bay") end
     if options.side=="fetch" and state.ship.hold.cur<75 then return nil,S.error("E_DEPOT_FULL","ship has no full free bay") end
-    if state.cash-(options.side=="fetch" and cost or 0)<options.personal_reserve
-        or state.company.cash-(options.side=="store" and cost or 0)<options.company_reserve then
+    if state.cash-((options.side=="fetch" or options.side=="buy") and cost or 0)<options.personal_reserve
+        or state.company.cash-((options.side=="store" or options.side=="buy") and cost or 0)<options.company_reserve then
         return nil,S.error("E_DEPOT_RESERVE","transfer would breach personal or company cash reserve")
     end
     local stamina=API.data.get("stamina")
@@ -78,9 +107,12 @@ local function ready(state,options)
     if API.protection and API.protection.isRecovering() then return nil,S.error("E_DEATH","death recovery is active") end
     return c,cost
 end
-function API.company.prepareTransfer(context,options,callback)
+local function prepare(context,options,callback,market)
     options=S.copy(options or {})
-    if type(callback)~="function" or (options.side~="store" and options.side~="fetch") or not S.name(options.planet,true)
+    if type(callback)~="function" or not S.name(options.planet,true)
+        or (market and (options.side~="buy" and options.side~="sell"))
+        or (not market and (options.side~="store" and options.side~="fetch"))
+        or (market and (not S.name(options.commodity) or not integer(options.price_limit,1,1000000)))
         or not integer(options.personal_reserve,0,9007199254740991) or not integer(options.company_reserve,0,9007199254740991)
         or (options.side=="store" and not S.name(options.commodity))
         or (options.side=="fetch" and not integer(options.bay,1,50)) then
@@ -88,8 +120,10 @@ function API.company.prepareTransfer(context,options,callback)
     end
     options.personal_reserve=tonumber(options.personal_reserve); options.company_reserve=tonumber(options.company_reserve)
     options.bay=tonumber(options.bay)
-    local operation="company.depot."..options.side
-    local allowed,why=S.authorize(context,"company.depot.preview",options); if not allowed then return nil,why end
+    options.price_limit=tonumber(options.price_limit)
+    local prefix=market and "company.cargo." or "company.depot."
+    local operation=prefix..options.side
+    local allowed,why=S.authorize(context,prefix.."preview",options); if not allowed then return nil,why end
     local initial; initial,why=snapshot(options.planet); if not initial then return nil,why end
     local lease; lease,why=API.commands.acquire(context,{service=operation}); if not lease then return nil,why end
     local active,sent,phase=true,false,"reading"
@@ -132,6 +166,7 @@ function API.company.prepareTransfer(context,options,callback)
             if not active or epoch~=my_epoch then return end
             received[channel]=true
             if not (received.room and received.ship and received.cash and received.stamina) then return end
+            if market and not (received.commodities and received[initial.rank=="Industrialist" and "business" or "company"]) then return end
             clear_read()
             local state,err=snapshot(options.planet)
             if not state then finish(nil,err); return end
@@ -139,6 +174,7 @@ function API.company.prepareTransfer(context,options,callback)
                 or norm(state.company.ceo)~=norm(initial.company.ceo) or state.ship.registry~=initial.ship.registry then
                 finish(nil,S.error("E_COMPANY_IDENTITY","location, ship, character or owner changed")); return
             end
+            if market then state.market=API.data.get("commodities"); done(state); return end
             local h,problem=API.company._depotWithLease(context,options.planet,function(depot,error_value)
                 child=nil
                 if not active then return end
@@ -151,15 +187,30 @@ function API.company.prepareTransfer(context,options,callback)
             end,lease)
             if not h then finish(nil,problem) elseif h:status().active then child=h end
         end
-        for _,channel in ipairs({"room","ship","cash","stamina"}) do
+        local channels={"room","ship","cash","stamina"}
+        if market then channels[#channels+1]="commodities"; channels[#channels+1]=initial.rank=="Industrialist" and "business" or "company" end
+        for _,channel in ipairs(channels) do
             local name=channel
             subscriptions[#subscriptions+1]=API.events.subscribe("data."..name,function(event)
                 if event.received then receive(name) end
             end)
         end
-        if not bound(15,function() finish(nil,S.error("E_COMPANY_TIMEOUT","fresh room/ship/cash/stamina GMCP was not received")) end) then return end
-        local ok,err=lease:send("score",{operation="company.depot.preview",reason="fresh transfer state"})
-        if not ok then finish(nil,err) end
+        if not bound(15,function()
+            local missing={}; for _,name in ipairs(channels) do if not received[name] then missing[#missing+1]=name end end
+            finish(nil,S.error("E_COMPANY_TIMEOUT","fresh GMCP missing: "..table.concat(missing,", ")))
+        end) then return end
+        local commands={"score"}
+        if market then
+            -- Legacy score refreshes the player but not all server revisions
+            -- push a full market or company report. Request each explicitly.
+            commands[#commands+1]="look"
+            commands[#commands+1]=initial.rank=="Industrialist" and "di business" or "di company"
+        end
+        for _,command in ipairs(commands) do
+            if not active or epoch~=my_epoch then return end
+            local ok,err=lease:send(command,{operation=prefix.."preview",reason="fresh transfer state"})
+            if not ok then finish(nil,err); return end
+        end
     end
     function handle:confirm(done)
         if not active or phase~="ready" or type(done)~="function" then return nil,S.error("E_AUTHORITY","active, unexpired preview required") end
@@ -168,23 +219,25 @@ function API.company.prepareTransfer(context,options,callback)
         read_all(function(before)
             local cargo,cost=ready(before,options)
             if not cargo then finish(nil,cost); return end
-            if not equal(before.ship,preview.ship) or not equal(before.depot.bays,preview.depot.bays)
-                or before.depot.capacity~=preview.depot.capacity then
+            if not equal(before.ship,preview.ship) or (not market and (not equal(before.depot.bays,preview.depot.bays)
+                or before.depot.capacity~=preview.depot.capacity)) then
                 finish(nil,S.error("E_DEPOT_CHANGED","inventory changed since preview; create a new preview")); return
             end
             local authorized,err=S.authorize(context,operation,options)
             if not authorized then finish(nil,err); return end
             phase="settling"; sent=true -- once only, including transport uncertainty
-            local command=options.side=="store" and "store "..cargo.commodity or "fetch "..options.bay
+            local command
+            if market then command=options.side.." "..cargo.commodity.." 1"
+            else command=options.side=="store" and "store "..cargo.commodity or "fetch "..options.bay end
             local ok,problem=lease:send(command,{operation=operation,reason="explicitly confirmed single bay"})
             if not ok then finish(nil,problem); return end
             read_all(function(after)
-                local delta=options.side=="fetch" and 1 or -1
+                local delta=(options.side=="fetch" or options.side=="buy") and 1 or -1
                 if not equal(manifest(after.ship.cargo),changed(before.ship.cargo,cargo,delta))
-                    or not equal(manifest(after.depot.bays),changed(before.depot.bays,cargo,-delta))
+                    or (not market and not equal(manifest(after.depot.bays),changed(before.depot.bays,cargo,-delta)))
                     or after.ship.hold.cur~=before.ship.hold.cur-delta*75
-                    or after.depot.free_bays~=before.depot.free_bays+delta
-                    or after.cash~=before.cash-delta*cost or after.company.cash~=before.company.cash+delta*cost then
+                    or (not market and after.depot.free_bays~=before.depot.free_bays+delta)
+                    or after.cash~=before.cash-delta*cost or after.company.cash~=before.company.cash+(market and 0 or delta*cost) then
                     finish(nil,S.error("E_DEPOT_RECONCILE","ship, depot or money movement does not match one bay")); return
                 end
                 finish({side=options.side,planet=options.planet,commodity=cargo.commodity,tons=75,value=cost,
@@ -206,3 +259,5 @@ function API.company.prepareTransfer(context,options,callback)
     end)
     return handle
 end
+function API.company.prepareTransfer(context,options,callback) return prepare(context,options,callback,false) end
+function API.company.prepareCargo(context,options,callback) return prepare(context,options,callback,true) end

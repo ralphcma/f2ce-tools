@@ -77,6 +77,13 @@ local function read_depot(context, planet, callback, borrowed)
     observer=API._adapter.observeLine(function(value)
         if not active then return end
         local clean=value:gsub("\27%[[%d;]*m", ""):gsub("%s+"," "):match("^%s*(.-)%s*$")
+        -- Ambient exchange ticker can interleave while standing at a depot's
+        -- exchange. Ignore only these exact server forms, never arbitrary
+        -- chat/diagnostics or an unrecognized depot row.
+        if clean:match("^%+%+%+ The exchange display shows the prices for [%a][%w]* %+%+%+$")
+            or clean:match("^%+%+%+ Exchange has %d+ tons for sale %+%+%+$")
+            or clean:match("^%+%+%+ Offer price is %d+ig/ton for first 75 tons %+%+%+$")
+            or clean:match("^%+%+%+ Exchange will buy 75 tons at %d+ig/ton %+%+%+$") then return end
         -- Headers may wrap. Buffer the whole bounded response until the exact
         -- report identity closes the depot block, then parse every depot byte.
         lines[#lines+1]=clean

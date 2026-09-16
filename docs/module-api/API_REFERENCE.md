@@ -195,6 +195,30 @@ restart journal or atomic server transaction is claimed.
 `cash` and `stamina` data channels mirror `char.vitals.cash` and
 `char.vitals.stamina`, with `data.cash` / `data.stamina` events and normal receipts.
 
+### Single-bay cargo market operation (native ew23)
+
+`company.cargo.transfer` exposes `company.prepareCargo(context,options,callback)`
+using the same preview/confirm/cancel handle. Options: `side="buy"|"sell"`,
+`planet`, `commodity`, both reserve floors and mandatory `price_limit` (maximum
+ask for buy, minimum bid for sell). Sends explicit `score`, `look` and rank-specific
+`di business` / `di company` reads under the same lease. Requires a fresh exchange-room
+response including commodities, ship, cash, stamina and rank-specific company.
+Buy requires an empty ordinary ship, at least one free bay, 5,000t saleable local
+stock and funds both for personal purchase and the company's later reimbursement.
+Sell requires **exactly one matching ordinary bay** before `sell <commodity> 1`. One
+counted `buy <commodity> 1` is sent for purchase. Revalidation and exact ship,
+hold and personal cash deltas plus unchanged company cash are mandatory.
+Authorization operations are `company.cargo.preview`, `.buy`, `.sell`.
+Same-origin sales fail with `E_CARGO_ORIGIN`; legacy data cannot prove an
+unbonded factory-produced exception. Choose a different buyer planet.
+
+Depot options additionally accept `single_cargo=true` and `expected_depot`
+(the exact copied bay list used for factory reservations). A changed bay list
+invalidates the operation before sending. Four exact ambient exchange ticker
+formats are excluded from depot capture; unknown text still fails strict parsing.
+The API does not lock factory production, enforce consumer trip budgets or
+replace the consumer's need to protect inputs reserved by other factories.
+
 ## Price provider operations
 
 `API.prices.registerProvider(context,{id,priority,scopes,capabilities,request})` returns a scoped registration token. `request(provider_request,done)` returns `false` to decline or calls `done(result)` / `done(nil,error)`. `provider_request:send(command,metadata)` uses the serialized service command lease and audit trail. It also exposes copied `options`, `commodity`, `id`, and `isCancelled()`.

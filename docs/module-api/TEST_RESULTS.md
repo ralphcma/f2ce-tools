@@ -1,5 +1,29 @@
 # Module API verification
 
+## 2026-09-16 Single-bay market operations for reviewed factory logistics
+
+Candidate: `f2ce-tools-3.3.0-native-ew23.mpackage`, SHA-256
+`a2dff63727ab9cdae8c259b5c46c71d8a8d75a8a092d00c90f53736e4e352efa`.
+
+- Add `company.cargo.transfer` / `company.prepareCargo` with one-bay preview,
+  explicit scoped confirmation, quote bounds, 5,000t saleable input stock,
+  personal/company reserves, fresh GMCP and exact settlement under one lease.
+- Explicit `score`, `look` and rank-specific company reads support the older
+  local binary; counted commodity commands avoid ambiguous bulk-sale syntax.
+  Reject same-origin sales without evidence of an unbonded exception.
+- Depot operations accept exact expected inventory for factory reservations.
+  Exclude only four verified ambient ticker formats from strict depot capture.
+- Source and reconstructed-package suites: 138 passing groups each (38 company
+  groups), 259 Lua syntax, 32 metadata checks and 226 matching embedded scripts.
+- Final FedHauler 1.17.15 passed 327 offline checks plus two disposable local
+  rank runs, 10 checks each. Actual reviewed export fetch/sell and independent
+  input buy/store primitives reconcile cargo and cash. Original database was
+  unchanged and both servers stopped. No live profile installation or use.
+- Evidence: FedHauler `docs/FACTORY_LIVE_RESULTS_1.17.15.md`. F2CE 4.9 b856b6a3,
+  private loopback namespaces, headless client and a one-room map fixture only.
+  Interplanetary/food navigation and graphical/public-server behavior remain
+  unverified; no recurring trip schedule, construction or promotion is added.
+
 ## 2026-09-16 Explicit single-bay depot transfers
 
 Candidate: `f2ce-tools-3.3.0-native-ew22.mpackage`, SHA-256
