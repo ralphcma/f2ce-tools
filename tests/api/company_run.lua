@@ -1,9 +1,12 @@
 -- Synthetic fixture matching Factory::Display's complete protocol; no profile data.
 local Mock=dofile("tests/api/mock_adapter.lua")
-dofile("src/scripts/api/v1.lua")
-dofile("src/scripts/api/services.lua")
-dofile("src/scripts/api/company.lua")
-dofile("src/scripts/factory/display_parser.lua")
+local root=arg[1] or "."
+dofile(root.."/src/scripts/api/v1.lua")
+dofile(root.."/src/scripts/api/services.lua")
+dofile(root.."/src/scripts/api/company.lua")
+dofile(root.."/src/scripts/api/company_depot.lua")
+dofile(root.."/src/scripts/factory/display_parser.lua")
+dofile(root.."/src/scripts/factory/depot_parser.lua")
 local API=F2CE.API.v1
 local fixture=[[
 Sample Ltd: Firewalls Production Facility #1
@@ -31,7 +34,8 @@ local mock, context, observer, adapter
 local function reset(rank)
     API:_reload(); mock=Mock.new(); observer=nil
     mock.gmcp={char={vitals={name="TestOwner",rank=rank or "Manufacturer"},
-        company={name="Sample Ltd",ceo="TestOwner",cash=7000000,factories={{number=1,output="Firewalls",planet="Example World"}}}}}
+        company={name="Sample Ltd",ceo="TestOwner",cash=7000000,depots={"Example World"},factories={{number=1,output="Firewalls",planet="Example World"}}}}}
+    if rank=="Industrialist" then mock.gmcp.char.business=mock.gmcp.char.company; mock.gmcp.char.company=nil end
     adapter={name="company-test"}
     for _,name in ipairs({"f2ceVersion","registerEvent","unregisterEvent","timer","cancelTimer",
         "sendCommand","gmcpSnapshot","nativeCommandBlocker","haulingStatus","navState"}) do
@@ -40,6 +44,7 @@ local function reset(rank)
     adapter.observeLine=function(callback) observer=callback; return 1 end
     adapter.unobserveLine=function() observer=nil end
     adapter.parseFactory=f2t_factory_parse_display
+    adapter.parseDepot=f2t_depot_parse_display
     API._install(adapter)
     assert(API.modules.register({id="test.company",version="1.0.0",authorize=function() return true end}))
     context=assert(API.modules.enable("test.company"))
@@ -75,8 +80,10 @@ test(rank.." refresh waits for an actual GMCP push",function()
     reset(rank); local calls=0
     assert(API.company.refresh(context,function(value,err) assert(value,tostring(err)); equal(err,nil); calls=calls+1 end))
     equal(mock.sent[1].command,rank=="Industrialist" and "di business" or "di company")
-    assert(API.commands._lease); API.data.refresh("company"); equal(calls,0)
-    mock:fireEvent("gmcp.char.company"); equal(calls,1); equal(API.commands._lease,nil)
+    local channel=rank=="Industrialist" and "business" or "company"
+    assert(API.commands._lease); API.data.refresh(channel); equal(calls,0)
+    mock:fireEvent("gmcp.char."..(channel=="business" and "company" or "business")); equal(calls,0)
+    mock:fireEvent("gmcp.char."..channel); equal(calls,1); equal(API.commands._lease,nil)
     local copy=API.company.snapshot(); copy.cash=0; equal(API.company.snapshot().cash,7000000)
 end)
 end
@@ -131,6 +138,81 @@ test("missing factory server reply is an error not an empty valid factory",funct
     reset(); local calls=0
     assert(API.company.inspect(context,1,function(value,err) equal(value,nil); code(err,"E_FACTORY_MISSING"); calls=calls+1 end))
     observer("You don't have a factory with that number!"); equal(calls,1); equal(API.commands._lease,nil)
+end)
+local depot=[[Location: Example World
+ Capacity: 20 cargo bays Workforce: 10 Efficiency: 100%
+ Bay # 1 Semiconductors Cost 300ig/ton (Origin Other World, Other System system)
+ Bay # 3 Firewalls Cost 1,200ig/ton (Origin Example World, Example System system)
+]]
+local function fence(rank,summary)
+    if rank=="Industrialist" then observer("Sample Ltd registered business - CEO Industrialist TestOwner")
+    else
+        observer("Company Report for Sample Ltd:")
+        observer("Example World - Capacity: 20 bays ("..(summary or 2).." in use) 100% efficiency")
+    end
+end
+test("strict depot parsing handles empty, wrapped, gapped full bays",function()
+    local d=assert(f2t_depot_parse_display(lines(depot),"Example World"))
+    equal(d.used_bays,2); equal(d.free_bays,18); equal(d.inventory.semiconductors,75); equal(d.bays[2].cost_per_ton,1200)
+    equal(assert(f2t_depot_parse_display(lines(depot:gsub("Example System","Example\nSystem")),"Example World")).used_bays,2)
+    d=assert(f2t_depot_parse_display({"Location: Example World Capacity: 20 cargo bays Workforce: 10 Efficiency: 100% The depot is empty."},"Example World"))
+    equal(d.used_bays,0); equal(d.free_bays,20)
+    for _,bad in ipairs({depot:gsub("# 3","# 1"),depot:gsub("# 3","# 21"),depot:gsub("1,200ig","1,20ig"),
+        depot:gsub("1,200ig",",120ig"),depot:gsub("Other System system%)","Other System"),depot.."Unexpected text"}) do
+        equal(f2t_depot_parse_display(lines(bad),"Example World"),nil)
+    end
+    equal(f2t_depot_parse_display(lines(depot),"Other World"),nil)
+end)
+for _,rank in ipairs({"Industrialist","Manufacturer"}) do
+test(rank.." depot requires ordered owner fence and real rank-specific GMCP",function()
+    reset(rank); local calls=0
+    assert(API.company.depot(context,"Example World",function(d,err)
+        assert(d,tostring(err)); equal(d.owner,"Sample Ltd"); equal(d.used_bays,2); equal(API.commands._lease,nil); calls=calls+1
+    end))
+    equal(mock.sent[1].command,"display depot Example World")
+    equal(mock.sent[2].command,rank=="Industrialist" and "di business" or "di company")
+    observer(depot); equal(calls,0); fence(rank); equal(calls,0)
+    local channel=rank=="Industrialist" and "business" or "company"
+    API.data.refresh(channel); equal(calls,0)
+    mock:fireEvent("gmcp.char."..channel); equal(calls,1); equal(observer,nil)
+end)
+end
+test("early GMCP waits for text fence and manufacturer occupancy",function()
+    reset(); local calls=0
+    assert(API.company.depot(context,"Example World",function(d,err) assert(d,tostring(err)); calls=calls+1 end))
+    mock:fireEvent("gmcp.char.company"); equal(calls,0)
+    observer(depot); observer("Company Report for Sample Ltd:"); equal(calls,0)
+    observer("Example World - Capacity: 20 bays (2 in use) 100% efficiency"); equal(calls,1)
+end)
+test("depot changed, ownership switch and truncated capture reject",function()
+    reset(); local err
+    assert(API.company.depot(context,"Example World",function(_,e) err=e end)); observer(depot); fence(nil,3)
+    mock:fireEvent("gmcp.char.company"); code(err,"E_DEPOT_CHANGED")
+    reset(); err=nil
+    assert(API.company.depot(context,"Example World",function(_,e) err=e end)); observer(depot)
+    mock.gmcp.char.company.ceo="Other"; mock:fireEvent("gmcp.char.company"); code(err,"E_COMPANY_IDENTITY")
+    reset(); err=nil
+    assert(API.company.depot(context,"Example World",function(_,e) err=e end)); observer(depot)
+    mock:runTimers(); code(err,"E_COMPANY_TIMEOUT"); equal(observer,nil); equal(API.commands._lease,nil)
+end)
+test("depot missing, unsafe name and contention send nothing",function()
+    reset()
+    for _,planet in ipairs({"Missing","Example World;quit","Example World\nquit"}) do equal(API.company.depot(context,planet,function() end),nil) end
+    equal(#mock.sent,0)
+    mock.native_blocker={kind="hauling"}; equal(API.company.depot(context,"Example World",function() end),nil); equal(#mock.sent,0)
+end)
+test("depot disconnect and OFF reject late response without callback",function()
+    for _,disconnect in ipairs({true,false}) do
+        reset(); local calls=0
+        local h=assert(API.company.depot(context,"Example World",function() calls=calls+1 end)); local late=observer
+        if disconnect then API._reconnectReset("disconnect") else h:cancel("OFF") end
+        late(depot); mock:runTimers(); equal(calls,0); equal(API.commands._lease,nil); equal(observer,nil)
+    end
+end)
+test("Industrialist never uses a stale company snapshot",function()
+    reset("Industrialist"); mock.gmcp.char.business=nil; mock.gmcp.char.company={name="Old Ltd",ceo="TestOwner",factories={}}
+    mock:fireEvent("gmcp.char.company"); mock:fireEvent("gmcp.char.business")
+    equal(API.company.snapshot(),nil)
 end)
 print(string.format("RESULT %d passed, %d failed",passed,failed))
 if failed>0 then os.exit(1) end

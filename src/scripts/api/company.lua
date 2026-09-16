@@ -9,16 +9,16 @@ local function identity()
         return nil, S.error("E_COMPANY_RANK", "Industrialist, Manufacturer or Financier required")
     end
     if type(vitals.name) ~= "string" or vitals.name == "" then return nil, S.error("E_COMPANY_IDENTITY", "character unavailable") end
-    return {name=vitals.name, rank=rank}
+    return {name=vitals.name, rank=rank, channel=rank=="Industrialist" and "business" or "company"}
 end
 function C.snapshot()
     local who, why=identity(); if not who then return nil, why end
-    local value=API.data.get("company")
+    local value=API.data.get(who.channel)
     if type(value) ~= "table" or type(value.ceo) ~= "string" or value.ceo:lower() ~= who.name:lower()
         or type(value.name) ~= "string" or value.name == "" or type(value.factories) ~= "table" then
         return nil, S.error("E_COMPANY_DATA", "company snapshot missing or belongs to another character")
     end
-    return value, API.data.receipt("company")
+    return value, API.data.receipt(who.channel)
 end
 
 local function request(context, operation, payload, callback)
@@ -64,7 +64,7 @@ local function request(context, operation, payload, callback)
         return current and current.name:lower()==who.name:lower() and current.rank==who.rank
     end
     if operation=="company.refresh" then
-        subscription=API.events.subscribe("data.company",function(event)
+        subscription=API.events.subscribe("data."..who.channel,function(event)
             if not active or not event.received then return end
             if not same_character() then return finish(nil,S.error("E_COMPANY_IDENTITY","character changed during refresh")) end
             local value,err=C.snapshot()

@@ -20,6 +20,7 @@ try {
 
     function Invoke-Suites([string]$SourceRoot) {
         $commands = @(
+            @('tests/api/company_run.lua', $SourceRoot),
             @('tests/api/run.lua', "$SourceRoot/src/scripts/api/v1.lua"),
             @('tests/api/native_adapter_run.lua', "$SourceRoot/src/scripts/api/v1.lua", "$SourceRoot/src/scripts/api/adapter.lua"),
             @('tests/exchange_walker/run.lua', $SourceRoot),

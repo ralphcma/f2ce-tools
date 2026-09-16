@@ -133,10 +133,39 @@ again, rather than obtaining new leases with old connection authority.
 | `commodities` | `data.commodities` | `gmcp.exchange.commodities` |
 | `futures_market` | `data.futures_market` | `gmcp.exchange.futures` |
 | `futures_owned` | `data.futures_owned` | `gmcp.char.futures` |
+| `business` | `data.business` | `gmcp.char.business` (Industrialist) |
+| `company` | `data.company` | `gmcp.char.company` (Manufacturer/Financier) |
 
 Each event is `{channel, available, value, timestamp}`. `value` is a deep copy and may be `nil` for absent/partial GMCP.
 
-## Price providers
+## Owner-bound company and depot reads
+
+`API.company.snapshot()` returns the copied business/company and its receipt,
+selected by current rank and checked against the current character's CEO name.
+No cross-rank cache fallback is used. `refresh(context, callback)` sends
+`di business` or `di company` and waits for a real rank-specific GMCP event.
+`inspect(context, factoryNumber, callback)` reads a complete owned factory display.
+
+Native ew21 adds capability `company.depot.read` and
+`API.company.depot(context, planet, callback)`. The planet must appear in this
+owner's snapshot. One broker lease sends `display depot <planet>` followed by
+the rank-appropriate company/business read. Its exact owner-bound header closes
+the depot display; fresh GMCP is also mandatory. Manufacturer capacity, occupancy
+and efficiency must agree with the following report. Industrialist reports have
+no occupancy count, so their completeness boundary is the ordered read fence.
+Quiet intervals and partial rows are never accepted as complete inventory.
+
+Result fields: `owner`, `ceo`, `planet`, `capacity`, `used_bays`, `free_bays`,
+`workforce`, `efficiency`, `bays`, `inventory`, `captured_at`, `completeness`.
+Each bay has `number`, `commodity`, `tons=75`, `cost_per_ton`, `origin`, `system`;
+inventory maps lower-case commodities to total tons. All three asynchronous
+methods return cancel/status handles, require explicit module authorization,
+hold ownership through response processing, time out in 15 seconds, and clean
+up on disable/reconnect. Callback `(value,error)` runs after lease release.
+The new operation is `company.depot.inspect`; no store/fetch or spend API is
+exposed. Remote inspection proves neither ship access nor future inventory.
+
+## Price provider operations
 
 `API.prices.registerProvider(context,{id,priority,scopes,capabilities,request})` returns a scoped registration token. `request(provider_request,done)` returns `false` to decline or calls `done(result)` / `done(nil,error)`. `provider_request:send(command,metadata)` uses the serialized service command lease and audit trail. It also exposes copied `options`, `commodity`, `id`, and `isCancelled()`.
 

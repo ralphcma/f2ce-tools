@@ -97,6 +97,10 @@ function adapter.parseFactory(lines, number)
     if type(f2t_factory_parse_display) ~= "function" then return nil, "native factory parser unavailable" end
     return f2t_factory_parse_display(lines, number)
 end
+function adapter.parseDepot(lines, planet)
+    if type(f2t_depot_parse_display) ~= "function" then return nil, "native depot parser unavailable" end
+    return f2t_depot_parse_display(lines, planet)
+end
 
 -- Use the native capture engine, not a temporary parser replacement. The
 -- callback itself is the ownership token: never reset someone else's capture.

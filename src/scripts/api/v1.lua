@@ -730,6 +730,7 @@ local DATA_CHANNELS = {
     futures_market = { path = {"exchange", "futures"}, event = "data.futures_market" },
     futures_owned = { path = {"char", "futures"}, event = "data.futures_owned" },
     company = { path = {"char", "company"}, event = "data.company" },
+    business = { path = {"char", "business"}, event = "data.business" },
 }
 function data.get(channel)
     if not DATA_CHANNELS[channel] then return nil, api_error("E_DATA_CHANNEL", "unknown data channel", { channel = channel }) end
@@ -1007,6 +1008,9 @@ function API._install(adapter)
     capability("company.read", API.company ~= nil and type(adapter.observeLine) == "function"
         and type(adapter.unobserveLine) == "function" and type(adapter.parseFactory) == "function",
         "owner-bound company GMCP and bounded factory displays")
+    capability("company.depot.read", API.company ~= nil and type(API.company.depot) == "function"
+        and type(adapter.observeLine) == "function" and type(adapter.unobserveLine) == "function"
+        and type(adapter.parseDepot) == "function", "owner-bound depot display with ordered read fence")
     capability("muxlet.content", adapter.muxletContentAvailable and adapter.muxletContentAvailable() or false,
         "UI content belongs in Mux.registerContent")
     if adapter.registerEvent then
@@ -1015,6 +1019,7 @@ function API._install(adapter)
             ["gmcp.char.ship"] = { "ship", "cargo" }, ["gmcp.jobs.board"] = { "jobs_board" }, ["gmcp.char.job"] = { "job" },
             ["gmcp.exchange.commodities"] = { "commodities" }, ["gmcp.exchange.futures"] = { "futures_market" }, ["gmcp.char.futures"] = { "futures_owned" },
             ["gmcp.char.company"] = { "company" },
+            ["gmcp.char.business"] = { "business" },
         }
         API._adapter_tokens = API._adapter_tokens or {}
         for event_name, channels in pairs(bindings) do

@@ -3,6 +3,7 @@
   {"name": "exchange"},
   {"name": "services"},
   {"name": "company"},
+  {"name": "company_depot"},
   {"name": "protection"},
   {"name": "navigation_verified"},
   {"name": "adapter"}

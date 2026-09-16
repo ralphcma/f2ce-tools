@@ -1,5 +1,28 @@
 # Module API verification
 
+## 2026-09-15 Industrialist data and owner-bound depot reads
+
+Candidate: `f2ce-tools-3.3.0-native-ew21.mpackage`, SHA-256
+`4581aa1650f3cf7e1ac9dfa703eef52aed9413e4913f9361428f3458cc3c1359`.
+
+- Add the real Industrialist `char.business` channel; no stale `char.company`
+  fallback. Manufacturer/Financier retain `char.company`.
+- Add `company.depot.read` / `company.depot(context,planet,callback)` with a
+  strict depot parser, single read-response lease, ordered owner header fence,
+  rank-specific fresh GMCP and Manufacturer occupancy reconciliation.
+- Source and exact-package verification: 120 groups pass per run, including
+  20 company/depot checks; 258 Lua files pass syntax, 32 metadata files parse,
+  and all 225 embedded scripts match the tested source/substitutions.
+- FedHauler 1.17.13 final package passed live Industrialist and Manufacturer
+  stocked-depot acceptance against the isolated local 4.9 b856b6a3 binary.
+  Separate disposable worlds, real legacy GMCP/text, strict read allowlists;
+  original database unchanged and all servers stopped. No public profiles,
+  cargo commands, depot writes, construction or promotion were used.
+
+Detailed consumer evidence is recorded in its
+`docs/FACTORY_LIVE_RESULTS_1.17.13.md`. These tests do not certify graphical UI,
+current public-server revisions, arrival depot access or hauling execution.
+
 ## 2026-09-11 Rebuilt-orbit repair and counted hauling commands
 
 Candidate: `f2ce-tools-3.3.0-native-ew19.mpackage`; Walker
