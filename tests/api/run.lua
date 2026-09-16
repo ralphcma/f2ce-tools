@@ -254,6 +254,71 @@ function tests.provider_timeout_ignores_late_callback()
     late_done({ commodity = "water", provider = "late" }); equal(result.provider, "f2ce.builtin")
 end
 
+function tests.provider_builtin_delegates_once_without_a_nested_queue()
+    reset(); local context = enabled("test.provider.filter"); local saved, completed
+    assert(API.prices.registerProvider(context, { id="test.filter", request=function(request, done)
+        saved = request
+        assert(request:useBuiltin(function(value, err)
+            truthy(value); equal(err,nil); value.filtered=true; done(value)
+        end))
+        return true
+    end }))
+    assert(API.prices.request(context,"water",{fallback=false},function(value) completed=value end))
+    truthy(completed.filtered); equal(mock.builtin_price_calls,1); equal(#mock.sent,1)
+    equal(#API.prices._queue,0); equal(API.commands._lease,nil)
+    local ok, err = saved:useBuiltin(function() error("stale callback") end)
+    equal(ok,nil); code(err,"E_PROVIDER_STALE")
+end
+
+function tests.provider_builtin_blocks_duplicate_or_mixed_dispatch()
+    reset(); local context = enabled("test.provider.duplicate"); local delivered, saved
+    API._adapter.priceCheck=function(_,_,callback) delivered=callback; return true end
+    assert(API.prices.registerProvider(context,{id="test.filter",request=function(request,done)
+        saved=request
+        assert(request:useBuiltin(function(value) done(value) end))
+        local ok,err=request:useBuiltin(function() end); equal(ok,nil); code(err,"E_PROVIDER_STATE")
+        ok,err=request:send("check premium water all"); equal(ok,nil); code(err,"E_PROVIDER_STATE")
+        return true
+    end}))
+    local count=0
+    assert(API.prices.request(context,"water",{fallback=false},function() count=count+1 end))
+    delivered({commodity="water"}); delivered({commodity="water"})
+    equal(count,1); equal(#mock.sent,0); equal(API.commands._lease,nil)
+    reset(); context=enabled("test.provider.mixed")
+    assert(API.prices.registerProvider(context,{id="test.filter",request=function(request,done)
+        assert(request:send("check premium water all"))
+        local ok,err=request:useBuiltin(function() end); equal(ok,nil); code(err,"E_PROVIDER_STATE")
+        done({commodity="water"}); return true
+    end}))
+    assert(API.prices.request(context,"water",{fallback=false},function() end))
+    equal(mock.builtin_price_calls,0); equal(#mock.sent,1)
+end
+
+function tests.provider_builtin_rechecks_contention()
+    reset(); local context=enabled("test.provider.blocked"); local observed
+    assert(API.prices.registerProvider(context,{id="test.filter",request=function(request,done)
+        mock.native_blocker={kind="map_exploration"}
+        assert(request:useBuiltin(function(value,err) observed=err; done(value,err) end))
+        return true
+    end}))
+    assert(API.prices.request(context,"water",{fallback=false},function(value,err) equal(value,nil); truthy(err) end))
+    code(observed,"E_COMMAND_CONTENTION"); equal(#mock.sent,0); equal(mock.builtin_price_calls,0)
+end
+
+function tests.provider_builtin_late_results_after_cancel_or_timeout_are_ignored()
+    for _,cancel in ipairs({true,false}) do
+        reset(); local context=enabled("test.provider.late"); local late, called= nil,0
+        API._adapter.priceCheck=function(_,_,callback) late=callback; return true end
+        assert(API.prices.registerProvider(context,{id="test.filter",request=function(request,done)
+            assert(request:useBuiltin(function(value) called=called+1; done(value) end)); return true
+        end}))
+        local finished=0
+        local handle=assert(API.prices.request(context,"water",{fallback=false,timeout=1},function() finished=finished+1 end))
+        if cancel then handle:cancel("test") else mock:runTimers() end
+        late({commodity="water"}); equal(called,0); equal(finished,1); equal(API.commands._lease,nil)
+    end
+end
+
 function tests.callback_errors_are_contained()
     reset(); local observed = false
     API.events.subscribe("api.callback_error", function() observed = true end)

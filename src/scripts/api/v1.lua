@@ -820,11 +820,11 @@ local function try_provider(request)
         if request.timer then request.timer:cancel(); request.timer = nil end
         if err or result == nil then try_provider(request) else price_finish(request, result, nil) end
     end
-    if provider.builtin then
-        if not API._adapter or not API._adapter.priceCheck then return done(nil, "built-in provider unavailable") end
+    local function builtin_check(callback)
+        if not API._adapter or not API._adapter.priceCheck then return callback(nil, "built-in provider unavailable") end
         local blocker = commands._nativeBlocker(request.borrowed)
         if blocker then
-            return done(nil, api_error(
+            return callback(nil, api_error(
                 "E_COMMAND_CONTENTION",
                 "native automation became active; built-in price command denied",
                 { blocker = blocker }
@@ -836,9 +836,16 @@ local function try_provider(request)
             metadata = { reason = "built-in F2CE price provider", service = "prices", provider = provider.id },
             timestamp = os.time(), status = "delegated",
         })
-        local ok, err = pcall(API._adapter.priceCheck, request.commodity, request.options, done)
-        if not ok then done(nil, err) end
+        local ok, accepted = pcall(API._adapter.priceCheck, request.commodity, request.options, callback)
+        if not ok or accepted == false then callback(nil, ok and "built-in provider declined" or accepted) end
+    end
+    if provider.builtin then
+        builtin_check(done)
         return
+    end
+    local delegated, provider_sent, delivered = false, false, false
+    local function current_attempt()
+        return not request.finished and prices._active == request and request.attempt_generation == attempt_generation
     end
     local provider_request = {
         id = request.public.request_id, commodity = request.commodity, options = readonly_copy(request.options),
@@ -846,8 +853,25 @@ local function try_provider(request)
             if request.finished or prices._active ~= request or request.attempt_generation ~= attempt_generation then
                 return nil, api_error("E_PROVIDER_STALE", "provider attempt is no longer active")
             end
+            if delegated then return nil, api_error("E_PROVIDER_STATE", "built-in delegation already owns this attempt") end
             metadata = metadata or {}; metadata.reason = metadata.reason or ("price provider " .. provider.id)
+            provider_sent = true
             return request.command_lease:send(command, metadata)
+        end,
+        -- Transform built-in results without queuing behind our own request or
+        -- surrendering its command lease. Exactly one query per attempt.
+        useBuiltin = function(_, callback)
+            if not current_attempt() then return nil, api_error("E_PROVIDER_STALE", "provider attempt is no longer active") end
+            if delegated or provider_sent then return nil, api_error("E_PROVIDER_STATE", "price attempt already dispatched") end
+            if type(callback) ~= "function" then return nil, api_error("E_ARGUMENT", "built-in completion callback required") end
+            delegated = true
+            builtin_check(function(value, err)
+                if delivered or not current_attempt() then return end
+                delivered = true
+                local ok = safe_call("delegated built-in completion", callback, readonly_copy(value), err)
+                if not ok then done(nil, "built-in result callback failed") end
+            end)
+            return true
         end,
         isCancelled = function() return request.cancelled end,
     }
@@ -1001,6 +1025,7 @@ function API._install(adapter)
     capability("commands.native_contention", type(adapter.nativeCommandBlocker) == "function", adapter.name)
     capability("gmcp.snapshots", type(adapter.gmcpSnapshot) == "function", adapter.name)
     capability("prices.providers", type(adapter.priceCheck) == "function", adapter.name)
+    capability("prices.provider_builtin", type(adapter.priceCheck) == "function", adapter.name)
     capability("hauling", type(adapter.haulingStart) == "function", adapter.name)
     capability("hauling.exchange_override", type(adapter.haulingStart) == "function", adapter.name)
     capability("map.queries", type(adapter.mapResolve) == "function", adapter.name)

@@ -12,6 +12,12 @@ source at `e7276b81f962b3c7e4c72c6b34a161e1d3415ba6`.
 
 ## Settings and defaults
 
+Native ew25 adds a same-reservation built-in price delegation for FedHauler
+1.17.17. This lets ordinary exchange hauling retain system blacklist filtering
+without requiring galaxy-wide premium access or queuing behind its own request.
+It does not change Walker settings, saved layouts, subscription rules, or
+default-OFF behavior. See `prices.provider_builtin` in the API reference.
+
 All configurable preferences live in **Muxlet Settings > F2CE-Tools > Exchange
 Walker**. `ew settings` or the content's SETTINGS button opens that window.
 The interface uses hooks present in Muxlet v2.2.9 (`register`, `validator`,

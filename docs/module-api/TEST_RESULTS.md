@@ -1,5 +1,25 @@
 # Module API verification
 
+## 2026-09-16 Same-reservation built-in price delegation
+
+Candidate: `f2ce-tools-3.3.0-native-ew25.mpackage`, SHA-256
+`ea22fee5f60e46f146a41c862f51a805d0e89903107e2565dbe53bd2578a7430`.
+
+Native suites pass against source and reconstructed packaged XML; 260 Lua
+sources compile, 32 metadata files parse, and all 226 embedded bodies match
+source with expected build substitutions. The core API suite now has 27 passing
+groups, including four for `prices.provider_builtin`: one leased built-in
+request without a nested queue, duplicate/mixed dispatch refusal, foreign native
+contention rechecks, and rejection of late/duplicate callbacks after cancel or
+timeout. Existing provider fallback and command ownership tests remain green.
+
+FedHauler 1.17.17's 82 native integration checks also pass using both packaged
+artifacts. The new test uses actual native cartel checking and price parsing
+with Industrialist GMCP and no premium ticker; the consumer removes blacklisted
+rows and recomputes results before continuing. No game subscription semantics,
+Walker layout, factory transfers, rank gates, or default-OFF behavior changed.
+No public-server profile or GUI session was used for this verification.
+
 ## 2026-09-16 Owned stamina cancellation and interplanetary factory journeys
 
 Candidate: `f2ce-tools-3.3.0-native-ew24.mpackage`, SHA-256

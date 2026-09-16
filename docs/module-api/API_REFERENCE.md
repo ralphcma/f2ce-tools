@@ -225,6 +225,18 @@ replace the consumer's need to protect inputs reserved by other factories.
 
 ## Price provider operations
 
+Native ew25 adds capability `prices.provider_builtin`. Within a provider attempt,
+`provider_request:useBuiltin(callback)` delegates **one** regular built-in price
+query on the existing command reservation. Callback receives copied
+`(result,error)`; the provider must finish with `done(transformedResult)` or
+`done(nil,error)`. This is for filtering/reanalysis, not a queued second request.
+The built-in query retains native rank/tool checks, capture and command audit.
+Foreign native activity is rechecked before dispatch. Duplicate delegation,
+mixing `send` with delegation, and stale attempts are refused; late/duplicate
+callbacks after completion/cancellation/timeout are ignored. A provider callback
+exception fails its attempt. It does not grant trading authority or premium
+access, change the commodity, or authorize a silent provider fallback.
+
 `API.prices.registerProvider(context,{id,priority,scopes,capabilities,request})` returns a scoped registration token. `request(provider_request,done)` returns `false` to decline or calls `done(result)` / `done(nil,error)`. `provider_request:send(command,metadata)` uses the serialized service command lease and audit trail. It also exposes copied `options`, `commodity`, `id`, and `isCancelled()`.
 
 `API.prices.request(context,commodity,{scope,timeout,...},callback)` returns a cancel/status handle. Providers run by descending priority, then the built-in `f2t_price_check_commodity` provider. Events: `provider.registered`, `.queued`, `.started`, `.timed_out`, `.completed`, `.failed`.
