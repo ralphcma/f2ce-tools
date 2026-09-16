@@ -55,6 +55,10 @@ Capabilities include `modules`, `events`, `navigation`, `navigation.status.v33`,
   timeout fail closed. `deathState`, `isRecovering`, `staminaState` and `status`
   expose copied protection data; events include death.started/completed and
   stamina.handoff_ready/failed. No literal `yes` or alternate navigator is used.
+  `detach()` cancels that exact client's active food trip as well as unregistering
+  it. Queued food purchases, return callbacks and pause polls are invalidated;
+  only stamina-owned navigation is stopped, never another owner's route. A
+  command already sent cannot be recalled. A new trip requires fresh activation.
 
 Capabilities added: `gmcp.receipts`, `commands.typed`, `po.discovery`,
 `trading.bulk`, `prices.analysis`, `prices.hauling_provider`, `settings.read`,

@@ -394,7 +394,10 @@ function adapter.staminaRegister(config)
     return f2t_stamina_register_client(config)
 end
 function adapter.staminaUnregister(callback)
-    if adapter.staminaOwns(callback) then f2t_stamina_unregister_client(); return true end
+    if adapter.staminaOwns(callback) then
+        if type(f2t_stamina_cancel_client_trip) == "function" then f2t_stamina_cancel_client_trip(callback) end
+        f2t_stamina_unregister_client(); return true
+    end
     return false
 end
 function adapter.staminaStart() f2t_stamina_start_monitoring(); return true end

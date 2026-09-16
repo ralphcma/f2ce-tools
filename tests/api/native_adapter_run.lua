@@ -154,6 +154,16 @@ function tests.borrowed_hauling_price_shares_only_stationary_own_reservation()
     F2T_SPEEDWALK_OWNER = nil
 end
 
+function tests.stamina_unregister_cancels_only_the_owned_native_food_trip()
+    local mine,foreign=function() end,function() end
+    F2T_STAMINA_STATE={client_check_active=mine}
+    local cancel_count,unregister_count=0,0
+    f2t_stamina_cancel_client_trip=function(check) equal(check,mine); cancel_count=cancel_count+1 end
+    f2t_stamina_unregister_client=function() unregister_count=unregister_count+1; F2T_STAMINA_STATE.client_check_active=nil end
+    equal(adapter.staminaUnregister(foreign),false); equal(cancel_count,0); equal(unregister_count,0)
+    truthy(adapter.staminaUnregister(mine)); equal(cancel_count,1); equal(unregister_count,1)
+end
+
 local names = {}; for name in pairs(tests) do names[#names + 1] = name end; table.sort(names)
 for _, name in ipairs(names) do
     local ok, err = xpcall(tests[name], function(value) return debug.traceback(tostring(value), 2) end)

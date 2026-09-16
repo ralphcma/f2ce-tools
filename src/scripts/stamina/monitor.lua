@@ -65,6 +65,27 @@ function f2t_stamina_unregister_client()
     f2t_debug_log("[stamina] Client unregistered")
 end
 
+-- Cancel only the exact registered client's trip. Clearing callbacks alone
+-- leaves buy/return timers alive after a consumer turns OFF or unloads.
+function f2t_stamina_cancel_client_trip(expected_check)
+    local state = F2T_STAMINA_STATE
+    if not expected_check or state.client_check_active ~= expected_check then return false end
+    state.food_trip_epoch = (state.food_trip_epoch or 0) + 1
+    state.current_phase = "idle"
+    state.return_location, state.food_trip_failed = nil, nil
+    state.client_was_paused, state.buy_attempts, state.wait_poll_count = false, 0, 0
+    state.standalone_dismissed_at = os.time()
+    if F2T_SPEEDWALK_OWNER == "stamina" then
+        if type(f2t_map_navigation_cancel) == "function" then
+            f2t_map_navigation_cancel("stamina client detached")
+        elseif type(f2t_map_speedwalk_stop) == "function" then
+            f2t_map_speedwalk_stop()
+        end
+        if F2T_SPEEDWALK_OWNER == "stamina" and f2t_map_clear_nav_owner then f2t_map_clear_nav_owner() end
+    end
+    return true
+end
+
 -- Monitoring control
 
 function f2t_stamina_start_monitoring()
@@ -200,10 +221,13 @@ function f2t_stamina_start_food_trip()
         return
     end
 
+    F2T_STAMINA_STATE.food_trip_epoch = (F2T_STAMINA_STATE.food_trip_epoch or 0) + 1
+    local epoch = F2T_STAMINA_STATE.food_trip_epoch
     local client_active = F2T_STAMINA_STATE.client_check_active and F2T_STAMINA_STATE.client_check_active()
     if client_active and F2T_STAMINA_STATE.client_pause_callback then
         f2t_debug_log("[stamina] Pausing client activity (client is active)")
         F2T_STAMINA_STATE.client_pause_callback()
+        if F2T_STAMINA_STATE.food_trip_epoch ~= epoch then return end
         F2T_STAMINA_STATE.client_was_paused = true
         F2T_STAMINA_STATE.wait_poll_count = 0
         -- Client may use a deferred pause (finishes its current operation first),
@@ -270,8 +294,9 @@ function f2t_stamina_phase_wait_for_client_pause()
     if F2T_STAMINA_STATE.wait_poll_count == 1 then
         f2t_debug_log("[stamina] Waiting for client to pause...")
     end
+    local epoch = F2T_STAMINA_STATE.food_trip_epoch
     tempTimer(0.5, function()
-        if F2T_STAMINA_STATE.current_phase == "waiting_for_client_pause" then
+        if F2T_STAMINA_STATE.food_trip_epoch == epoch and F2T_STAMINA_STATE.current_phase == "waiting_for_client_pause" then
             f2t_stamina_phase_wait_for_client_pause()
         end
     end)
@@ -366,9 +391,10 @@ function f2t_stamina_phase_navigate_to_food()
     f2t_debug_log("[stamina] Navigating to food source: %s", food_source)
     cecho(string.format("\n<cyan>[stamina]<reset> Navigating to food source: %s\n", food_source))
 
+    local epoch = F2T_STAMINA_STATE.food_trip_epoch
     f2t_map_navigate(food_source, {
         on_result = function(ok)
-            if F2T_STAMINA_STATE.current_phase ~= "navigating_to_food" then return end
+            if F2T_STAMINA_STATE.food_trip_epoch ~= epoch or F2T_STAMINA_STATE.current_phase ~= "navigating_to_food" then return end
             if not ok then
                 f2t_stamina_abort_food_trip("could not find path to food source")
             end
@@ -407,8 +433,9 @@ function f2t_stamina_phase_buy_food()
 
     send("buy food")   -- automatically consumed, +10 stamina
 
+    local epoch = F2T_STAMINA_STATE.food_trip_epoch
     tempTimer(0.5, function()
-        if F2T_STAMINA_STATE.current_phase == "buying_food" then
+        if F2T_STAMINA_STATE.food_trip_epoch == epoch and F2T_STAMINA_STATE.current_phase == "buying_food" then
             f2t_stamina_phase_buy_food()
         end
     end)
@@ -581,7 +608,9 @@ function f2t_stamina_register_nav_handler()
     end
 
     F2T_STAMINA_STATE.nav_handler_id = registerAnonymousEventHandler("gmcp.room.info", function()
+        local epoch = F2T_STAMINA_STATE.food_trip_epoch
         tempTimer(0.3, function()
+            if F2T_STAMINA_STATE.food_trip_epoch ~= epoch then return end
             f2t_stamina_check_nav_to_food_complete()
             f2t_stamina_check_nav_back_complete()
         end)

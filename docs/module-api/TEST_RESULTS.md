@@ -1,5 +1,33 @@
 # Module API verification
 
+## 2026-09-16 Owned stamina cancellation and interplanetary factory journeys
+
+Candidate: `f2ce-tools-3.3.0-native-ew24.mpackage`, SHA-256
+`46b650cc3a0aecc7083f01442d2610986df77940e019eae86b27e94149830b96`.
+
+- A disposable-server OFF-during-food test reproduced queued purchases after
+  API client detachment. Unregister now cancels only the exact client's trip,
+  invalidates old callbacks and releases only stamina-owned navigation.
+  A command already transmitted cannot be recalled; foreign owners are untouched.
+- Seven new native stamina groups cover owned/foreign cancellation, stale buy,
+  navigation, room and pause callbacks, and cancellation within the pause callback.
+  An adapter group checks exact callback ownership during unregister.
+- Source and reconstructed-package suites: **146 groups each**, 260 Lua syntax,
+  32 metadata checks, and 226 matching embedded script/trigger bodies.
+- Final-package code with unchanged FedHauler 1.17.15 passed Industrialist and
+  Manufacturer Candy/Earth input buy/store and output fetch/sell journeys. Both
+  recovered from 25% to 100% stamina through real food travel and 15 purchases,
+  returned and resumed without duplicate cargo mutations. Six checks per rank.
+- A third disposable world passed three OFF checks, including cancellation
+  during food buying with no subsequent food/haul commands or retained lease.
+  FedHauler's 327 offline checks passed. Original databases remained unchanged;
+  all test servers stopped. No installation, public account use or push occurred.
+- Evidence: FedHauler `docs/FACTORY_JOURNEY_RESULTS_2026-09-16.md`. Tests use the
+  local F2CE 4.9 b856b6a3 binary, isolated loopback namespaces and real native
+  speedwalk/stamina with XML/BFS headless map storage. They do not certify
+  graphical Mudlet, arbitrary routes, map exploration, random customs recovery
+  or public-server revisions. No repeated schedule, construction or promotion.
+
 ## 2026-09-16 Single-bay market operations for reviewed factory logistics
 
 Candidate: `f2ce-tools-3.3.0-native-ew23.mpackage`, SHA-256
