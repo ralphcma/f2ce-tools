@@ -4,6 +4,7 @@
   {"name": "services"},
   {"name": "company"},
   {"name": "company_depot"},
+  {"name": "company_transfer"},
   {"name": "protection"},
   {"name": "navigation_verified"},
   {"name": "adapter"}

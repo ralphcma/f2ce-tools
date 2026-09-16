@@ -5,6 +5,7 @@ dofile(root.."/src/scripts/api/v1.lua")
 dofile(root.."/src/scripts/api/services.lua")
 dofile(root.."/src/scripts/api/company.lua")
 dofile(root.."/src/scripts/api/company_depot.lua")
+dofile(root.."/src/scripts/api/company_transfer.lua")
 dofile(root.."/src/scripts/factory/display_parser.lua")
 dofile(root.."/src/scripts/factory/depot_parser.lua")
 local API=F2CE.API.v1
@@ -36,6 +37,9 @@ local function reset(rank)
     mock.gmcp={char={vitals={name="TestOwner",rank=rank or "Manufacturer"},
         company={name="Sample Ltd",ceo="TestOwner",cash=7000000,depots={"Example World"},factories={{number=1,output="Firewalls",planet="Example World"}}}}}
     if rank=="Industrialist" then mock.gmcp.char.business=mock.gmcp.char.company; mock.gmcp.char.company=nil end
+    mock.gmcp.char.vitals.cash="1000000"; mock.gmcp.char.vitals.stamina={cur=100,max=100}
+    mock.gmcp.char.ship={registry="TEST",hold={cur=150,max=150},cargo={}}
+    mock.gmcp.room={info={num=1,area="Example World",system="Example",flags={"exchange"}}}
     adapter={name="company-test"}
     for _,name in ipairs({"f2ceVersion","registerEvent","unregisterEvent","timer","cancelTimer",
         "sendCommand","gmcpSnapshot","nativeCommandBlocker","haulingStatus","navState"}) do
@@ -45,6 +49,7 @@ local function reset(rank)
     adapter.unobserveLine=function() observer=nil end
     adapter.parseFactory=f2t_factory_parse_display
     adapter.parseDepot=f2t_depot_parse_display
+    adapter.setting=function() return 25 end
     API._install(adapter)
     assert(API.modules.register({id="test.company",version="1.0.0",authorize=function() return true end}))
     context=assert(API.modules.enable("test.company"))
@@ -213,6 +218,99 @@ test("Industrialist never uses a stale company snapshot",function()
     reset("Industrialist"); mock.gmcp.char.business=nil; mock.gmcp.char.company={name="Old Ltd",ceo="TestOwner",factories={}}
     mock:fireEvent("gmcp.char.company"); mock:fireEvent("gmcp.char.business")
     equal(API.company.snapshot(),nil)
+end)
+local function state_push()
+    for _,event in ipairs({"gmcp.room.info","gmcp.char.ship","gmcp.char.vitals.cash","gmcp.char.vitals.stamina"}) do mock:fireEvent(event) end
+end
+local function depot_push(text,used,rank)
+    observer(text); fence(rank,used)
+    mock:fireEvent(rank=="Industrialist" and "gmcp.char.business" or "gmcp.char.company")
+end
+local function options(side)
+    return {side=side or "fetch",bay=3,commodity="Semiconductors",planet="Example World",personal_reserve=100000,company_reserve=1000000}
+end
+local function store_cargo()
+    mock.gmcp.char.ship.cargo={{commodity="Semiconductors",origin="Other World",cost=300}}
+    mock.gmcp.char.ship.hold.cur=75; mock:fireEvent("gmcp.char.ship")
+end
+test("transfer preview is read-only, holds broker and expires without a write",function()
+    reset(); local result,err
+    local h=assert(API.company.prepareTransfer(context,options(),function(v,e) result,err=v,e end))
+    equal(mock.sent[1].command,"score"); state_push(); depot_push(depot,2)
+    equal(h:status().phase,"ready"); equal(result.value,90000); equal(#mock.sent,3); assert(API.commands._lease)
+    mock:runTimers(); code(err,"E_DEPOT_EXPIRED"); equal(API.commands._lease,nil); equal(h:status().sent,false)
+end)
+for _,rank in ipairs({"Industrialist","Manufacturer"}) do
+for _,side in ipairs({"store","fetch"}) do
+test(rank.." confirms exactly one "..side.." against ship depot and cash",function()
+    reset(rank); if side=="store" then store_cargo() end
+    local h=assert(API.company.prepareTransfer(context,options(side),function(v,e) assert(v,tostring(e)) end))
+    state_push(); depot_push(depot,2,rank)
+    local result,err
+    assert(h:confirm(function(v,e) result,err=v,e end)); equal(h:confirm(function() end),nil)
+    state_push(); depot_push(depot,2,rank)
+    equal(h:status().sent,true); equal(h:status().phase,"settling")
+    local co=mock.gmcp.char[rank=="Industrialist" and "business" or "company"]
+    local text,used
+    if side=="store" then
+        mock.gmcp.char.ship.cargo={}; mock.gmcp.char.ship.hold.cur=150
+        mock.gmcp.char.vitals.cash="1022500"; co.cash=6977500
+        text=depot.."Bay # 2 Semiconductors Cost 300ig/ton (Origin Other World, Other System system)"; used=3
+    else
+        mock.gmcp.char.ship.cargo={{commodity="Firewalls",origin="Example World",cost=1200}}; mock.gmcp.char.ship.hold.cur=75
+        mock.gmcp.char.vitals.cash="910000"; co.cash=7090000
+        text=depot:gsub(" Bay # 3[^\n]+\n",""); used=1
+    end
+    state_push(); depot_push(text,used,rank)
+    assert(result,tostring(err)); equal(result.confirmed,true); equal(API.commands._lease,nil); equal(h:status().phase,"confirmed")
+    local writes=0; for _,s in ipairs(mock.sent) do if s.command:match("^store ") or s.command:match("^fetch ") then writes=writes+1 end end
+    equal(writes,1)
+end)
+end
+end
+test("transfer rejects changed inventory between preview and confirmation without a write",function()
+    reset(); local err
+    local h=assert(API.company.prepareTransfer(context,options(),function() end)); state_push(); depot_push(depot,2)
+    assert(h:confirm(function(_,e) err=e end)); store_cargo(); state_push(); depot_push(depot,2)
+    code(err,"E_DEPOT_CHANGED"); equal(h:status().sent,false); equal(API.commands._lease,nil)
+end)
+test("transfer refuses reserves, low stamina, full ship and full depot",function()
+    for _,case in ipairs({"cash","company","stamina","ship","depot"}) do
+        reset(); local side=(case=="company" or case=="depot") and "store" or "fetch"
+        if side=="store" then store_cargo() end
+        local o=options(side)
+        if case=="cash" then o.personal_reserve=1000000 elseif case=="company" then o.company_reserve=7000000 end
+        if case=="stamina" then mock.gmcp.char.vitals.stamina.cur=20 end
+        if case=="ship" then mock.gmcp.char.ship.hold={cur=0,max=75}; mock.gmcp.char.ship.cargo={{commodity="Parts",origin="Home",cost=1}} end
+        mock:fireEvent("gmcp.char.ship")
+        local err; local h=assert(API.company.prepareTransfer(context,o,function(_,e) err=e end)); state_push()
+        if case=="depot" then
+            local text="Location: Example World Capacity: 1 cargo bays Workforce: 10 Efficiency: 100% Bay #1 Parts Cost 1ig/ton (Origin Home, Example system)"
+            observer(text); observer("Company Report for Sample Ltd: Example World - Capacity: 1 bays (1 in use) 100% efficiency"); mock:fireEvent("gmcp.char.company")
+        else depot_push(depot,2) end
+        assert(err,case); equal(h:status().sent,false); equal(API.commands._lease,nil)
+    end
+end)
+test("unconfirmed transfer never retries or claims success",function()
+    reset(); local err
+    local h=assert(API.company.prepareTransfer(context,options(),function() end)); state_push(); depot_push(depot,2)
+    assert(h:confirm(function(_,e) err=e end)); state_push(); depot_push(depot,2)
+    state_push(); depot_push(depot,2) -- server evidence unchanged
+    code(err,"E_DEPOT_UNCONFIRMED"); equal(h:status().phase,"unconfirmed"); equal(API.commands._lease,nil)
+    local n=#mock.sent; mock:runTimers(); equal(#mock.sent,n); equal(h:confirm(function() end),nil)
+end)
+test("location changes and pre-send cancellation invalidate transfer authority",function()
+    reset(); local err
+    local h=assert(API.company.prepareTransfer(context,options(),function(_,e) err=e end))
+    mock.gmcp.room.info.num=2; state_push(); code(err,"E_COMPANY_IDENTITY"); equal(h:status().sent,false)
+    reset(); h=assert(API.company.prepareTransfer(context,options(),function() error("late callback") end))
+    h:cancel("OFF"); local n=#mock.sent; state_push(); mock:runTimers(); equal(#mock.sent,n); equal(API.commands._lease,nil)
+end)
+test("disconnect after sending leaves an uncertain outcome and cannot replay",function()
+    reset(); local h=assert(API.company.prepareTransfer(context,options(),function() end)); state_push(); depot_push(depot,2)
+    assert(h:confirm(function() error("late callback") end)); state_push(); depot_push(depot,2)
+    API._reconnectReset("disconnect"); equal(h:status().phase,"unconfirmed"); equal(h:status().uncertain,true)
+    local n=#mock.sent; state_push(); mock:runTimers(); equal(#mock.sent,n); equal(API.commands._lease,nil)
 end)
 print(string.format("RESULT %d passed, %d failed",passed,failed))
 if failed>0 then os.exit(1) end

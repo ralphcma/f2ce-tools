@@ -162,8 +162,38 @@ inventory maps lower-case commodities to total tons. All three asynchronous
 methods return cancel/status handles, require explicit module authorization,
 hold ownership through response processing, time out in 15 seconds, and clean
 up on disable/reconnect. Callback `(value,error)` runs after lease release.
-The new operation is `company.depot.inspect`; no store/fetch or spend API is
-exposed. Remote inspection proves neither ship access nor future inventory.
+The read operation is `company.depot.inspect`. Remote inspection proves neither
+ship access nor future inventory.
+
+### Explicit single-bay transfers (native ew22)
+
+Capability `company.depot.transfer` exposes
+`API.company.prepareTransfer(context, options, callback)`. Options require
+`side="store"|"fetch"`, `planet`, `commodity` for store or `bay` for fetch,
+and nonnegative `personal_reserve` and `company_reserve`. Returns a handle with
+`status()`, `cancel(reason)` and **`confirm(callback)`**. The preparation callback
+receives a copied proposal, not an authority token; no write occurs until confirm.
+
+The module must explicitly authorize `company.depot.preview`, its depot inspect,
+and `company.depot.store` or `.fetch` at confirmation and immediately before send.
+One broker lease spans preview, revalidation and settlement. `score` refreshes
+room/ship/cash/stamina with actual GMCP events, then owner-fenced depot inspection
+refreshes rank-specific company data. Preview expiry is 30 seconds, state and
+depot reads each have a 15-second deadline. Ground location, owner, rank, ship,
+unchanged manifests, capacity, stamina and both reserve floors are checked.
+
+Store chooses the first matching ordinary 75-ton ship cargo; fetch chooses the
+numbered depot bay. No jobs, batch loop, navigation, food recovery or retries.
+Settlement requires matching cargo multiset/space deltas and opposite cash
+movements at original cargo cost. On success, completion runs after release;
+the proposal callback runs **while the lease remains held**. A failure after
+send is `E_DEPOT_UNCONFIRMED`: inspect manually, never automatically resend.
+Cancellation cannot reverse a sent command. Server production is not locked;
+an unrelated inventory/cash change can prevent reconciliation. No persistent
+restart journal or atomic server transaction is claimed.
+
+`cash` and `stamina` data channels mirror `char.vitals.cash` and
+`char.vitals.stamina`, with `data.cash` / `data.stamina` events and normal receipts.
 
 ## Price provider operations
 

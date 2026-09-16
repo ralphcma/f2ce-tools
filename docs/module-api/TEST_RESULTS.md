@@ -1,5 +1,26 @@
 # Module API verification
 
+## 2026-09-16 Explicit single-bay depot transfers
+
+Candidate: `f2ce-tools-3.3.0-native-ew22.mpackage`, SHA-256
+`bb4f77111d84718c10e8961642ebe61b029d7fae369e4ddc8c0b64ebc537b5d8`.
+
+- Add `company.depot.transfer` preview/confirm, one shared lease, mandatory
+  reserves and fresh room/ship/cash/stamina plus owner-fenced depot reads.
+- Revalidate before sending once; require ship/depot and both cash deltas before
+  confirmation. Expiry/cancel/disconnect revoke authority; no automatic retries
+  after an uncertain result. No navigation, batch loop or construction.
+- Source and exact-package verification: 130 groups pass per run, including
+  30 company/depot groups; 259 Lua syntax and 32 metadata checks; 226 embedded
+  scripts match source/substitutions.
+- Final FedHauler 1.17.14 artifact passed Industrialist and Manufacturer real
+  store/fetch round trips on separate disposable loopback worlds, each with 12
+  acceptance checks. Both cash balances and cargo returned to their starting
+  values. Original database unchanged; test servers stopped cleanly.
+- Consumer evidence: `docs/FACTORY_LIVE_RESULTS_1.17.14.md` in FedHauler. Local
+  binary is F2CE 4.9 b856b6a3; this is not graphical/public-server certification
+  or a complete factory hauling executor. No live profiles were installed/run.
+
 ## 2026-09-15 Industrialist data and owner-bound depot reads
 
 Candidate: `f2ce-tools-3.3.0-native-ew21.mpackage`, SHA-256

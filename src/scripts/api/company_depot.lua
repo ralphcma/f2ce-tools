@@ -7,7 +7,7 @@ local function has_depot(company, planet)
         if type(name)=="string" and name:lower()==planet:lower() then return name end
     end
 end
-function API.company.depot(context, planet, callback)
+local function read_depot(context, planet, callback, borrowed)
     if type(callback)~="function" then return nil,S.error("E_ARGUMENT","callback required") end
     local name = S.name(planet,true)
     if not name then return nil,S.error("E_ARGUMENT","valid depot planet required") end
@@ -20,7 +20,12 @@ function API.company.depot(context, planet, callback)
         or type(API._adapter.unobserveLine)~="function" then return nil,S.error("E_CAPABILITY","native depot parser and observer required") end
     local vitals=API.data.get("vitals")
     local channel=vitals.rank=="Industrialist" and "business" or "company"
-    local lease; lease,why=API.commands.acquire(context,{service=operation}); if not lease then return nil,why end
+    local lease=borrowed
+    if lease then
+        if lease~=API.commands._lease or not lease.active or lease.module_id~=context.module_id then
+            return nil,S.error("E_COMMAND_CONTENTION","invalid borrowed depot lease")
+        end
+    else lease,why=API.commands.acquire(context,{service=operation}); if not lease then return nil,why end end
     local active,timer,observer,subscription,token=true
     local lines, report, record, received, summary={},false,nil,false,nil
     local handle={}
@@ -30,7 +35,8 @@ function API.company.depot(context, planet, callback)
         if timer then API._adapter.cancelTimer(timer) end
         if observer then API._adapter.unobserveLine(observer) end
         if subscription then subscription:cancel() end
-        lease:release(reason); S.forget(context,token)
+        if not borrowed then lease:release(reason) end
+        S.forget(context,token)
         return true
     end
     function handle:cancel(reason) cleanup(reason or "depot_cancelled"); return true end
@@ -105,3 +111,7 @@ function API.company.depot(context, planet, callback)
     end
     return handle
 end
+function API.company.depot(context,planet,callback) return read_depot(context,planet,callback) end
+-- Internal transaction composition; authorization and exact lease ownership
+-- are still checked. The outer transfer retains its lease between reads.
+API.company._depotWithLease=read_depot

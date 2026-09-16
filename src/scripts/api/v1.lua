@@ -722,6 +722,8 @@ local data = API.data
 local DATA_CHANNELS = {
     room = { path = {"room", "info"}, event = "data.room" },
     vitals = { path = {"char", "vitals"}, event = "data.vitals" },
+    cash = { path = {"char", "vitals", "cash"}, event = "data.cash" },
+    stamina = { path = {"char", "vitals", "stamina"}, event = "data.stamina" },
     ship = { path = {"char", "ship"}, event = "data.ship" },
     cargo = { path = {"char", "ship", "cargo"}, event = "data.cargo" },
     jobs_board = { path = {"jobs", "board"}, event = "data.jobs_board" },
@@ -1011,6 +1013,8 @@ function API._install(adapter)
     capability("company.depot.read", API.company ~= nil and type(API.company.depot) == "function"
         and type(adapter.observeLine) == "function" and type(adapter.unobserveLine) == "function"
         and type(adapter.parseDepot) == "function", "owner-bound depot display with ordered read fence")
+    capability("company.depot.transfer", API.company ~= nil and type(API.company.prepareTransfer)=="function",
+        "single-bay preview/confirm with ship, depot and cash reconciliation")
     capability("muxlet.content", adapter.muxletContentAvailable and adapter.muxletContentAvailable() or false,
         "UI content belongs in Mux.registerContent")
     if adapter.registerEvent then
@@ -1020,6 +1024,8 @@ function API._install(adapter)
             ["gmcp.exchange.commodities"] = { "commodities" }, ["gmcp.exchange.futures"] = { "futures_market" }, ["gmcp.char.futures"] = { "futures_owned" },
             ["gmcp.char.company"] = { "company" },
             ["gmcp.char.business"] = { "business" },
+            ["gmcp.char.vitals.cash"] = { "cash", "vitals" },
+            ["gmcp.char.vitals.stamina"] = { "stamina", "vitals" },
         }
         API._adapter_tokens = API._adapter_tokens or {}
         for event_name, channels in pairs(bindings) do
