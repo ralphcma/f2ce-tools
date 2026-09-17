@@ -1,5 +1,44 @@
 # Company inspection API (native-ew20)
 
+## Single-factory preview/confirmation (native-ew27)
+
+Capability `company.factory.build` exposes
+`API.company.prepareFactory(context, options, callback)` and a cancellable
+handle with `status()` / `confirm(callback)`. Required options:
+
+```lua
+{planet="Example", system="Elsewhere", commodity="Firewalls",
+ company_reserve=1000000, labour=150, biological_required=false,
+ output_price_floor=800,
+ inputs={{commodity="Semiconductors", required=20, minimum_stock=5000,
+          price_limit=300}}}
+```
+
+These are reviewed bounds, not API-calculated recipes/profit. At most six inputs;
+minimum stock is at least 5,000t each. Require Industrialist/Manufacturer at the
+selected non-Sol exchange, valid owned company/factory roster, an empty rank slot
+(8/15), and the source-derived 2m cost without breaching the explicit reserve.
+No public-server rule change or guarantee of future factory funding is implied.
+
+Preview and confirmation both obtain fresh room/stamina/commodity GMCP via
+`score`/`look`, then workforce and owned company via an ordered system read on
+the SAME broker lease. Validate workers, economy/visitor access, stock, input
+ask ceilings, output bid floor, healthy stamina and inactive recovery. Reject
+changed owner/rank/location; confirmation also rejects roster changes. A ready
+preview holds the lease and expires after 30s; read phases have 15s deadlines.
+
+Authorize `company.factory.preview` for reads. Immediately before the purchase,
+authorize `company.factory.buy` with copied options plus `proposal` (owner, CEO,
+rank, planet/system, commodity, slot, cost, cash, reserve, workforce). **Consumer
+must persist intent at this authorization boundary before returning true.**
+The API sends one `buy factory <commodity>`, requests the rank-specific company
+report and requires a fresh snapshot with exactly one matching added slot and
+an exact 2m debit. Concurrent company spending can leave the result unresolved.
+Success returns `confirmed=true` and post-purchase `company_cash`; the consumer
+must persist completion. Post-send errors use `E_FACTORY_UNCONFIRMED`; status
+exposes `sent`/`uncertain`. Never replay an uncertain purchase. No navigation,
+batch building, promotion or module startup authority is provided.
+
 ## System workforce inspection (native-ew26)
 
 Capability `company.system.read` exposes
@@ -18,6 +57,9 @@ reports. Validates all planets in the response, with a 256-planet / 128KiB bound
 Additional infrastructure/approval fields are not interpreted. This read does
 not use/enable navigation's capture flags, explore, gag output, or reserve labour.
 Available workers are a snapshot, not a hiring guarantee or build permission.
+ew27 starts capture only at the exact requested system header, ignoring trailing
+text from earlier commands whose GMCP arrived first. Missing headers time out;
+the owned text/GMCP completion fence and strict report validation still apply.
 
 ## Original inspection contract
 
@@ -44,10 +86,10 @@ callback receives `(value, error)` after cleanup/release. Disconnect/unload
 cancels outstanding work. Inputs are never inferred from missing GMCP fields.
 This reader does not gag unrelated output or alter Mux panes.
 
-No typed company-spending operations are exposed. Existing native company
-panels and manual factory controls remain unchanged. Automated growth toward
-100m, factory selection, repair/dividend budgets, depot capacity validation and
-input/output hauling remain follow-on work, not features of this release.
+The original ew20 inspection contract exposes no spending. Later explicit
+transfer/cargo/build operations are documented separately below/above. Existing
+native panels remain unchanged; unattended growth toward 100m and automatic
+promotion, repairs or dividends are not provided.
 
 ## PO stamina change
 

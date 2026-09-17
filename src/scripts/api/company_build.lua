@@ -1,0 +1,211 @@
+-- One explicitly confirmed factory, at the current exchange. No navigation,
+-- retries or automatic growth loop. Consumer authorization must durably record
+-- intent when company.factory.buy is requested immediately before the send.
+local API,S=F2CE.API.v1,F2CE.API.v1.services
+local COST=2000000
+local limits={Industrialist=8,Manufacturer=15}
+local function norm(v) return type(v)=="string" and v:lower() or "" end
+local function integer(v,lo,hi) return type(v)=="number" and v==math.floor(v) and v>=lo and v<=hi end
+local function equal(a,b)
+    if type(a)~=type(b) then return false end
+    if type(a)~="table" then return a==b end
+    for k,v in pairs(a) do if not equal(v,b[k]) then return false end end
+    for k in pairs(b) do if a[k]==nil then return false end end; return true
+end
+local function failure(message) return S.error("E_FACTORY_BUILD",message) end
+local function location(options)
+    local room=API.data.get("room")
+    if type(room)~="table" or norm(room.area)~=norm(options.planet) or norm(room.system)~=norm(options.system)
+        or not integer(tonumber(room.num),0,99999999) or type(room.flags)~="table" then return nil end
+    local exchange=false
+    for k,v in pairs(room.flags) do
+        if v=="space" or (k=="space" and v==true) then return nil end
+        if v=="exchange" or (k=="exchange" and v==true) then exchange=true end
+    end
+    return exchange and norm(room.system).."\0"..norm(room.area).."\0"..room.num or nil
+end
+local function snapshot(options)
+    local company,why=API.company.snapshot(); if not company then return nil,why end
+    local vitals=API.data.get("vitals"); local limit=limits[vitals.rank]
+    local where=location(options)
+    if not limit or not where then return nil,failure("Industrialist/Manufacturer at the selected exchange required") end
+    if not integer(company.cash,0,10000000000) then return nil,failure("company cash unavailable") end
+    local roster,slot={},nil
+    for _,f in pairs(company.factories) do
+        if type(f)~="table" or not integer(f.number,1,limit) or roster[f.number]
+            or not S.name(f.planet,true) or not S.name(f.output) then return nil,failure("invalid company factory roster") end
+        roster[f.number]={number=f.number,planet=f.planet,output=f.output}
+    end
+    for i=1,limit do if not roster[i] then slot=i; break end end
+    return {owner=company.name,ceo=company.ceo,rank=vitals.rank,location=where,roster=roster,slot=slot,cash=company.cash}
+end
+local function validate_options(o)
+    if type(o)~="table" or not S.name(o.planet,true) or not S.name(o.system,true) or norm(o.system)=="sol"
+        or type(o.commodity)~="string" or not o.commodity:match("^[%a][%w]*$") or #o.commodity>40
+        or not integer(o.company_reserve,0,10000000000) or not integer(o.labour,0,1000000)
+        or type(o.biological_required)~="boolean" or not integer(o.output_price_floor,1,1000000)
+        or type(o.inputs)~="table" or #o.inputs>6 then return false end
+    local seen={}
+    for _,input in ipairs(o.inputs) do
+        if type(input)~="table" or not S.name(input.commodity) or seen[norm(input.commodity)]
+            or not integer(input.required,1,1000000) or not integer(input.price_limit,1,1000000)
+            or not integer(input.minimum_stock,5000,1000000000) then return false end
+        seen[norm(input.commodity)]=true
+    end
+    return true
+end
+local function ready(state,report,o)
+    if not state.slot then return nil,failure("no free factory slot") end
+    if state.cash-COST<o.company_reserve then return nil,failure("2m construction cost would breach company reserve") end
+    local stamina=API.data.get("stamina")
+    local threshold=math.max(25,tonumber(API.settings.get("stamina","threshold")) or 0)
+    if type(stamina)~="table" or not integer(tonumber(stamina.max),1,1000000)
+        or not integer(tonumber(stamina.cur),0,tonumber(stamina.max))
+        or tonumber(stamina.cur)*100/tonumber(stamina.max)<=threshold
+        or (API.protection and API.protection.isRecovering()) then return nil,failure("recover stamina/death protection before construction") end
+    local workers=report and report.planets and report.planets[norm(o.planet)]
+    if not workers or norm(report.system)~=norm(o.system) or workers.closed
+        or not integer(workers.available,0,1000000000) or workers.available<o.labour
+        or workers.economy=="None" or (o.biological_required and workers.economy~="Biological") then
+        return nil,failure("workers, economy or visitor access do not qualify")
+    end
+    local market=API.data.get("commodities"); local normalized={}
+    if type(market)~="table" then return nil,failure("local market unavailable") end
+    for name,row in pairs(market) do
+        local key=norm(name); if normalized[key] then return nil,failure("duplicate local commodity") end
+        normalized[key]=row
+    end
+    local output=normalized[norm(o.commodity)]
+    if type(output)~="table" or not integer(tonumber(output.buy),1,1000000)
+        or tonumber(output.buy)<o.output_price_floor then return nil,failure("output bid below reviewed price") end
+    for _,input in ipairs(o.inputs) do
+        local row=normalized[norm(input.commodity)]
+        if type(row)~="table" or not integer(tonumber(row.stock),input.minimum_stock,1000000000)
+            or not integer(tonumber(row.sell),1,1000000) or tonumber(row.sell)>input.price_limit then
+            return nil,failure("local input stock/ask no longer meets reviewed bounds: "..input.commodity)
+        end
+    end
+    return {owner=state.owner,ceo=state.ceo,rank=state.rank,planet=o.planet,system=o.system,commodity=o.commodity,
+        slot=state.slot,cost=COST,company_cash=state.cash,company_reserve=o.company_reserve,
+        after_build=state.cash-COST,workers_available=workers.available,workers_required=o.labour,economy=workers.economy}
+end
+function API.company.prepareFactory(context,options,callback)
+    local o=S.copy(options)
+    if not validate_options(o) or type(callback)~="function" then return nil,S.error("E_ARGUMENT","complete bounded construction proposal required") end
+    local allowed,why=S.authorize(context,"company.factory.preview",o); if not allowed then return nil,why end
+    local initial; initial,why=snapshot(o); if not initial then return nil,why end
+    if type(API.company._systemWithLease)~="function" then return nil,S.error("E_CAPABILITY","system workforce API required") end
+    local lease; lease,why=API.commands.acquire(context,{service="company.factory.preview"}); if not lease then return nil,why end
+    local active,sent,phase=true,false,"reading"
+    local token,timer,child,preview,completion
+    local subscriptions={}; local epoch=0
+    local handle={}
+    local function clear()
+        epoch=epoch+1
+        if timer then API._adapter.cancelTimer(timer); timer=nil end
+        if child then child:cancel("build_read_finished"); child=nil end
+        for _,sub in ipairs(subscriptions) do sub:cancel() end; subscriptions={}
+    end
+    local function cleanup(reason)
+        if not active then return false end
+        active=false; clear(); lease:release(reason); S.forget(context,token); return true
+    end
+    function handle:status() return {active=active,phase=phase,sent=sent,uncertain=sent and phase~="confirmed"} end
+    function handle:cancel(reason) phase=sent and "unconfirmed" or "cancelled"; cleanup(reason or phase); return true end
+    local function finish(value,err)
+        if not active then return end
+        phase=value and "confirmed" or (sent and "unconfirmed" or "failed")
+        cleanup(phase)
+        if err and sent then err=S.error("E_FACTORY_UNCONFIRMED",tostring(err).."; a purchase may have occurred; inspect manually, never retry automatically") end
+        if S.live(context) then
+            local ok,detail=pcall(completion or callback,value,err)
+            if not ok then API.events.emit("api.callback_error",{label="company.factory",error=tostring(detail)}) end
+        end
+    end
+    local function bound(seconds,fn)
+        timer=API._adapter.timer(seconds,fn,false)
+        if not timer then finish(nil,S.error("E_CAPABILITY","factory timer unavailable")); return false end
+        return true
+    end
+    local function identity(state)
+        return state and state.owner==initial.owner and state.ceo==initial.ceo and state.rank==initial.rank and state.location==initial.location
+    end
+    local function read_all(done)
+        clear(); local mine=epoch; local received={}
+        local channels={"room","stamina","commodities"}
+        local function receive(channel)
+            if not active or mine~=epoch then return end
+            received[channel]=true
+            for _,name in ipairs(channels) do if not received[name] then return end end
+            clear()
+            local h,problem=API.company._systemWithLease(context,o.system,function(report,err)
+                child=nil; if not active then return end
+                if not report then finish(nil,err); return end
+                local state,invalid=snapshot(o)
+                if not identity(state) then finish(nil,invalid or failure("owner, rank or exchange changed")); return end
+                done(state,report)
+            end,lease)
+            if not h then finish(nil,problem) elseif h:status().active then child=h end
+        end
+        for _,channel in ipairs(channels) do local name=channel
+            subscriptions[#subscriptions+1]=API.events.subscribe("data."..name,function(event) if event.received then receive(name) end end)
+        end
+        if not bound(15,function() finish(nil,failure("fresh room/stamina/market response timed out")) end) then return end
+        for _,command in ipairs({"score","look"}) do
+            if not active or epoch~=mine then return end
+            local ok,err=lease:send(command,{operation="company.factory.preview",reason="fresh construction state"})
+            if not ok then finish(nil,err); return end
+        end
+    end
+    function handle:confirm(done)
+        if not active or phase~="ready" or type(done)~="function" then return nil,S.error("E_AUTHORITY","active unexpired factory preview required") end
+        completion=done; phase="revalidating"
+        read_all(function(before,report)
+            local proposal,err=ready(before,report,o)
+            if not proposal then finish(nil,err); return end
+            if not equal(before.roster,preview.roster) then finish(nil,failure("factory roster changed since preview")); return end
+            -- The explicit consumer authorization records intent durably HERE,
+            -- not at preview time. Denial means no purchase is sent.
+            local payload=S.copy(o); payload.proposal=proposal
+            local allowed,why=S.authorize(context,"company.factory.buy",payload)
+            if not allowed then finish(nil,why); return end
+            phase,sent="settling",true
+            local ok,problem=lease:send("buy factory "..o.commodity,{operation="company.factory.buy",reason="explicit single-factory confirmation"})
+            if not ok then finish(nil,problem); return end
+            -- Purchase has no replay path. Read the ordered company response
+            -- and reconcile one added slot plus exactly the 2m company debit.
+            clear(); local mine=epoch
+            local channel=initial.rank=="Industrialist" and "business" or "company"
+            subscriptions[#subscriptions+1]=API.events.subscribe("data."..channel,function(event)
+                if not active or mine~=epoch or not event.received then return end
+                local after,invalid=snapshot(o)
+                if not identity(after) then finish(nil,invalid or failure("identity changed after purchase")); return end
+                local expected=S.copy(before.roster)
+                expected[before.slot]={number=before.slot,planet=o.planet,output=o.commodity}
+                local actual=S.copy(after.roster)
+                for _,f in pairs(actual) do f.planet=norm(f.planet); f.output=norm(f.output) end
+                for _,f in pairs(expected) do f.planet=norm(f.planet); f.output=norm(f.output) end
+                if not equal(actual,expected) or after.cash~=before.cash-COST then
+                    finish(nil,failure("company cash and exact new factory slot did not reconcile")); return
+                end
+                proposal.confirmed=true; proposal.company_cash=after.cash; finish(proposal)
+            end)
+            if not bound(15,function() finish(nil,failure("purchase confirmation timed out")) end) then return end
+            local requested,read_error=lease:send(channel=="business" and "di business" or "di company",
+                {operation="company.factory.preview",reason="reconcile single factory purchase"})
+            if not requested then finish(nil,read_error) end
+        end)
+        return true
+    end
+    token=context:own("company.factory.preview",handle,function(value) value:cancel("module_cleanup") end)
+    read_all(function(state,report)
+        local proposal,err=ready(state,report,o)
+        if not proposal then finish(nil,err); return end
+        preview=state; phase="ready"
+        if not bound(30,function() finish(nil,failure("factory preview expired")) end) then return end
+        proposal.expires_in=30
+        local ok,detail=pcall(callback,S.copy(proposal))
+        if not ok then handle:cancel("preview_callback_failed"); API.events.emit("api.callback_error",{label="company.factory",error=tostring(detail)}) end
+    end)
+    return handle
+end

@@ -12,6 +12,12 @@ source at `e7276b81f962b3c7e4c72c6b34a161e1d3415ba6`.
 
 ## Settings and defaults
 
+Native ew27 adds explicit single-factory preview/confirmation for FedHauler
+1.17.19, with fresh workforce/market/company checks and no automatic replay.
+It also starts workforce capture at the requested system header so late room
+text cannot corrupt the report. No Walker layout, settings or startup behavior
+changes. See `COMPANY_API.md` for consumer journaling responsibilities.
+
 Native ew26 adds the read-only `company.system.read` capability for factory-site
 workforce/economy review. A complete `di system` report is fenced by company text
 and GMCP under one command lease. It does not start map capture/navigation or

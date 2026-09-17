@@ -1,5 +1,36 @@
 # Module API verification
 
+## 2026-09-16 Single-factory confirmation and workforce capture boundary
+
+Candidate `f2ce-tools-3.3.0-native-ew27.mpackage`, SHA256
+`60fae327f45cca2425c60ba4b5b2595146815216e3e95521d6829559d7cefb8e`.
+Companion FedHauler 1.17.19, SHA256
+`6c83d07f089ff2f54b14bb821c9e8144b3f4a5af50a0eab3959c65d36e235ee2`.
+
+All native suites pass source and reconstructed package; company suite has 53
+checks, 262 Lua files compile, 32 metadata files parse, and 228 packaged bodies
+match. Tests cover both ranks, first slot/empty roster, fresh worker/market/cash
+and stamina bounds, changed roster/authority, lease cleanup and no retry after
+uncertain purchase. Header gating ignores trailing earlier-command text, without
+weakening the strict system parser or the company text/GMCP completion fence.
+
+Final-package code passed 11 real local-server checks per rank (Industrialist,
+Manufacturer) in separate disposable, loopback-only namespaces. One cancelled
+preview spent nothing; a separately confirmed purchase created Firewalls #2 on
+Candy with exactly a 2m company debit and a real consumer journal. Repeated
+confirmation sent nothing. The initial test exposed trailing `look` text arriving
+after GMCP; the fixed system-header capture passed both ranks. Missing responses,
+OFF/late replies and disconnect cleanup also passed. Original databases stayed
+unchanged and disposable servers stopped. Public profiles were not touched.
+
+Server was older F2CE 4.9 b856b6a3, SHA256
+`396f17838e436f4881959e7c7a41f2be08bbd5e8c17a44d8da35825cf0a13412`.
+This is not GUI acceptance, public-version certification, a labour reservation,
+or profit guarantee. No automatic construction loop/promotion was added. The
+consumer's 390 regressions passed; its purchase authority requires a durable
+intent journal immediately before send. Full sanitized evidence is in the
+FedHauler repository's `docs/FACTORY_BUILD_RESULTS_1.17.19.md`.
+
 ## 2026-09-16 Same-reservation built-in price delegation
 
 Candidate: `f2ce-tools-3.3.0-native-ew25.mpackage`, SHA-256

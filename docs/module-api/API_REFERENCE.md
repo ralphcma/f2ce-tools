@@ -144,6 +144,11 @@ Each event is `{channel, available, value, timestamp}`. `value` is a deep copy a
 
 ## Owner-bound company and depot reads
 
+Native ew27 adds `company.factory.build` / `API.company.prepareFactory` for
+separately confirmed single-factory construction. See `docs/COMPANY_API.md` for
+bounded options, fresh checks and the mandatory consumer pre-send journal
+boundary. This is not a read-only operation or a scheduled company manager.
+
 `API.company.snapshot()` returns the copied business/company and its receipt,
 selected by current rank and checked against the current character's CEO name.
 No cross-rank cache fallback is used. `refresh(context, callback)` sends

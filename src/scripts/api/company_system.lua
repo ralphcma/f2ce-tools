@@ -47,7 +47,7 @@ function API.company._parseSystem(text,system)
     return result
 end
 
-function API.company.system(context,system,callback)
+local function read_system(context,system,callback,borrowed)
     local name=S.name(system,true)
     if not name or type(callback)~="function" then return nil,S.error("E_ARGUMENT","valid system and callback required") end
     local operation="company.system.inspect"
@@ -57,9 +57,16 @@ function API.company.system(context,system,callback)
     local channel=who.rank=="Industrialist" and "business" or "company"
     local adapter=API._adapter
     if type(adapter.observeLine)~="function" or type(adapter.unobserveLine)~="function" then return nil,S.error("E_CAPABILITY","line observer required") end
-    local lease; lease,why=API.commands.acquire(context,{service=operation}); if not lease then return nil,why end
+    local lease=borrowed
+    if lease then
+        if lease~=API.commands._lease or not lease.active or lease.module_id~=context.module_id then
+            return nil,S.error("E_COMMAND_CONTENTION","invalid borrowed system lease")
+        end
+    else lease,why=API.commands.acquire(context,{service=operation}); if not lease then return nil,why end end
     local active,timer,observer,subscription,token=true
     local lines,record,received={},nil,false
+    local started,line_count,byte_count=false,0,0
+    local expected_header=("System information for the "..name.." system:"):lower()
     local handle={}
     local function cleanup(reason)
         if not active then return false end
@@ -67,7 +74,8 @@ function API.company.system(context,system,callback)
         if timer then adapter.cancelTimer(timer) end
         if observer then adapter.unobserveLine(observer) end
         if subscription then subscription:cancel() end
-        lease:release(reason); S.forget(context,token); return true
+        if not borrowed then lease:release(reason) end
+        S.forget(context,token); return true
     end
     function handle:cancel(reason) cleanup(reason or "system_cancelled"); return true end
     function handle:status() return {active=active,operation=operation} end
@@ -91,9 +99,17 @@ function API.company.system(context,system,callback)
     end)
     observer=adapter.observeLine(function(value)
         if not active then return end
-        lines[#lines+1]=value:gsub("\27%[[%d;]*m","")
+        value=value:gsub("\27%[[%d;]*m","")
+        line_count,byte_count=line_count+1,byte_count+#value+1
+        if line_count>2000 or byte_count>131072 then return finish(nil,S.error("E_SYSTEM_DISPLAY","response exceeds bounds")) end
+        -- GMCP may precede the trailing text of score/look/company. Do not
+        -- treat that earlier command's output or company header as our report.
+        if not started then
+            if trim(value:match("^[^\r\n]*")):lower()~=expected_header then return end
+            started=true
+        end
+        lines[#lines+1]=value
         local joined=table.concat(lines,"\n")
-        if #lines>2000 or #joined>131072 then return finish(nil,S.error("E_SYSTEM_DISPLAY","response exceeds bounds")) end
         if not record then
             local marker=channel=="business" and company.name.." registered business - CEO " or "Company Report for "..company.name..":"
             local pos=joined:find(pattern(marker))
@@ -113,3 +129,5 @@ function API.company.system(context,system,callback)
     end
     return handle
 end
+function API.company.system(context,system,callback) return read_system(context,system,callback) end
+API.company._systemWithLease=read_system

@@ -5,6 +5,7 @@ dofile(root.."/src/scripts/api/v1.lua")
 dofile(root.."/src/scripts/api/services.lua")
 dofile(root.."/src/scripts/api/company.lua")
 dofile(root.."/src/scripts/api/company_system.lua")
+dofile(root.."/src/scripts/api/company_build.lua")
 dofile(root.."/src/scripts/api/company_depot.lua")
 dofile(root.."/src/scripts/api/company_transfer.lua")
 dofile(root.."/src/scripts/factory/display_parser.lua")
@@ -456,8 +457,122 @@ test("system read cancellation, wrong owner and incomplete report release resour
     assert(API.company.system(context,"Serenity",function(_,e) err=e end))
     mock.gmcp.char.vitals.rank="Industrialist"; mock:fireEvent("gmcp.char.vitals"); mock:fireEvent("gmcp.char.company")
     code(err,"E_COMPANY_IDENTITY"); equal(API.commands._lease,nil)
-    reset(); assert(API.company.system(context,"Serenity",function(_,e) err=e end))
-    observer("I don't know that system."); observer("Company Report for Sample Ltd:"); code(err,"E_SYSTEM_DISPLAY"); equal(API.commands._lease,nil)
+    reset(); err=nil; assert(API.company.system(context,"Serenity",function(_,e) err=e end))
+    observer("I don't know that system."); observer("Company Report for Sample Ltd:")
+    equal(err,nil); mock:runTimers(); code(err,"E_COMPANY_TIMEOUT"); equal(API.commands._lease,nil)
+end)
+test("system read ignores preceding command text and fences only the requested header",function()
+    reset(); local value,calls=nil,0
+    assert(API.company.system(context,"Serenity",function(v,e) assert(not e); value=v; calls=calls+1 end))
+    observer("Trailing room description."); observer("Company Report for Sample Ltd:")
+    observer("System information for the Other system:")
+    mock:fireEvent("gmcp.char.company"); equal(calls,0)
+    observer(system_fixture); equal(calls,0)
+    observer("Company Report for Sample Ltd:"); equal(calls,1); equal(value.planets.holland.available,2500)
+    equal(API.commands._lease,nil)
+end)
+local function build_options()
+    return {planet="Example World",system="Example",commodity="Firewalls",company_reserve=1000000,
+        labour=150,biological_required=false,output_price_floor=800,
+        inputs={{commodity="Semiconductors",required=20,minimum_stock=5000,price_limit=300}}}
+end
+local function build_reset(rank)
+    reset(rank); mock.gmcp.exchange={commodities={Semiconductors={stock=5000,sell=300,buy=200},Firewalls={stock=100,sell=1000,buy=900}}}
+end
+local function build_fresh(rank,workers,economy)
+    mock:fireEvent("gmcp.room.info"); mock:fireEvent("gmcp.char.vitals.stamina"); mock:fireEvent("gmcp.exchange.commodities")
+    if not observer then return end
+    observer("System information for the Example system:\n  Member of the Test cartel\nExample World, Example system, Test cartel\n  Owner: Example\n  Economy: "..(economy or "Leisure").."    Workers available: "..(workers or 2500).."/2500")
+    observer(rank=="Industrialist" and "Sample Ltd registered business - CEO Industrialist TestOwner" or "Company Report for Sample Ltd:")
+    mock:fireEvent(rank=="Industrialist" and "gmcp.char.business" or "gmcp.char.company")
+end
+local function buys()
+    local n=0; for _,row in ipairs(mock.sent) do if row.command:match("^buy factory ") then n=n+1 end end; return n
+end
+for _,rank in ipairs({"Industrialist","Manufacturer"}) do
+test("factory preview/confirm buys once and reconciles slot plus company debit at "..rank,function()
+    build_reset(rank); local proposal,result,err
+    local h=assert(API.company.prepareFactory(context,build_options(),function(v,e) proposal,err=v,e end))
+    build_fresh(rank); assert(proposal,tostring(err)); equal(proposal.cost,2000000); equal(proposal.slot,2)
+    equal(proposal.after_build,5000000); equal(buys(),0); assert(API.commands._lease)
+    assert(h:confirm(function(v,e) result,err=v,e end)); build_fresh(rank)
+    equal(buys(),1); equal(h:status().phase,"settling"); equal(result,nil)
+    local channel=rank=="Industrialist" and "business" or "company"
+    mock.gmcp.char[channel].cash=5000000
+    mock.gmcp.char[channel].factories[2]={number=2,planet="Example World",output="Firewalls"}
+    mock:fireEvent("gmcp.char."..channel)
+    assert(result,tostring(err)); equal(result.confirmed,true); equal(result.company_cash,5000000)
+    equal(h:status().active,false); equal(API.commands._lease,nil); equal(h:confirm(function() end),nil); equal(buys(),1)
+end)
+end
+test("first factory uses slot one without requiring an owned factory recipe",function()
+    build_reset(); mock.gmcp.char.company.factories={}; mock:fireEvent("gmcp.char.company")
+    local proposal,result,err
+    local h=assert(API.company.prepareFactory(context,build_options(),function(v,e) proposal,err=v,e end))
+    build_fresh(); assert(proposal,tostring(err)); equal(proposal.slot,1); equal(buys(),0)
+    assert(h:confirm(function(v,e) result,err=v,e end)); build_fresh()
+    mock.gmcp.char.company.factories={{number=1,planet="Example World",output="Firewalls"}}
+    mock.gmcp.char.company.cash=5000000; mock:fireEvent("gmcp.char.company")
+    assert(result,tostring(err)); equal(result.slot,1); equal(buys(),1); equal(API.commands._lease,nil)
+end)
+
+test("factory preview refuses missing workers, bad economy, stock, bid, reserves and slots",function()
+    for _,case in ipairs({"workers","bio","stock","ask","bid","reserve","slots","stamina"}) do
+        build_reset(); local o=build_options(); local err
+        if case=="bio" then o.biological_required=true end
+        if case=="stock" then mock.gmcp.exchange.commodities.Semiconductors.stock=4999 end
+        if case=="ask" then mock.gmcp.exchange.commodities.Semiconductors.sell=301 end
+        if case=="bid" then mock.gmcp.exchange.commodities.Firewalls.buy=799 end
+        if case=="reserve" then o.company_reserve=5000001 end
+        if case=="slots" then for i=2,15 do mock.gmcp.char.company.factories[i]={number=i,planet="Example World",output="Firewalls"} end end
+        if case=="stamina" then mock.gmcp.char.vitals.stamina.cur=25 end
+        local h=assert(API.company.prepareFactory(context,o,function(_,e) err=e end))
+        build_fresh(nil,case=="workers" and 149 or 2500)
+        assert(err,case); equal(buys(),0); equal(API.commands._lease,nil); equal(h:status().active,false)
+    end
+end)
+test("factory refuses Sol, wrong rank/location and injected names before reads",function()
+    for _,case in ipairs({"sol","rank","location","commodity","input","reserve"}) do
+        build_reset(); local o=build_options()
+        if case=="sol" then o.system="Sol" end
+        if case=="rank" then mock.gmcp.char.vitals.rank="Financier"; mock:fireEvent("gmcp.char.vitals") end
+        if case=="location" then mock.gmcp.room.info.area="Elsewhere"; mock:fireEvent("gmcp.room.info") end
+        if case=="commodity" then o.commodity="Firewalls;quit" end
+        if case=="input" then o.inputs[2]=o.inputs[1] end
+        if case=="reserve" then o.company_reserve=-1 end
+        equal(API.company.prepareFactory(context,o,function() end),nil); equal(#mock.sent,0)
+    end
+end)
+test("factory confirmation repeats conditions and refuses changed roster or authorization",function()
+    for _,case in ipairs({"roster","workers","ask","cash","authority"}) do
+        build_reset(); local err; local h=assert(API.company.prepareFactory(context,build_options(),function() end)); build_fresh()
+        if case=="roster" then mock.gmcp.char.company.factories[2]={number=2,planet="Example World",output="Alloys"} end
+        if case=="ask" then mock.gmcp.exchange.commodities.Semiconductors.sell=301 end
+        if case=="cash" then mock.gmcp.char.company.cash=2999999 end
+        if case=="authority" then API._modules[context.module_id].spec.authorize=function(op) return op~="company.factory.buy" end end
+        assert(h:confirm(function(_,e) err=e end)); build_fresh(nil,case=="workers" and 0 or 2500)
+        assert(err,case); equal(buys(),0); equal(API.commands._lease,nil)
+    end
+end)
+test("factory timeout/expiry/cancel never repeat or claim an uncertain purchase",function()
+    for _,stage in ipairs({"reading","ready","settling"}) do
+        build_reset(); local err; local h=assert(API.company.prepareFactory(context,build_options(),function(_,e) err=e end))
+        if stage~="reading" then build_fresh() end
+        if stage=="settling" then assert(h:confirm(function(_,e) err=e end)); build_fresh() end
+        mock:runTimers(); assert(err); equal(API.commands._lease,nil); equal(buys(),stage=="settling" and 1 or 0)
+        if stage=="settling" then code(err,"E_FACTORY_UNCONFIRMED") end
+        mock:runTimers(); equal(buys(),stage=="settling" and 1 or 0)
+    end
+    build_reset(); local called=false; local h=assert(API.company.prepareFactory(context,build_options(),function() end)); build_fresh()
+    assert(h:confirm(function() called=true end)); build_fresh(); h:cancel("OFF")
+    mock:fireEvent("gmcp.char.company"); equal(called,false); equal(h:status().uncertain,true); equal(API.commands._lease,nil)
+end)
+test("factory mismatched confirmation is unresolved, never a retry",function()
+    build_reset(); local err; local h=assert(API.company.prepareFactory(context,build_options(),function() end)); build_fresh()
+    assert(h:confirm(function(_,e) err=e end)); build_fresh()
+    mock.gmcp.char.company.factories[2]={number=2,planet="Example World",output="Alloys"}
+    mock.gmcp.char.company.cash=5000000; mock:fireEvent("gmcp.char.company")
+    code(err,"E_FACTORY_UNCONFIRMED"); equal(buys(),1); equal(API.commands._lease,nil)
 end)
 print(string.format("RESULT %d passed, %d failed",passed,failed))
 if failed>0 then os.exit(1) end
