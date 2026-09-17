@@ -574,5 +574,82 @@ test("factory mismatched confirmation is unresolved, never a retry",function()
     mock.gmcp.char.company.cash=5000000; mock:fireEvent("gmcp.char.company")
     code(err,"E_FACTORY_UNCONFIRMED"); equal(buys(),1); equal(API.commands._lease,nil)
 end)
+local function site_options(depot_only)
+    local o=build_options(); o.require_depot=true; o.factory_limit=8; o.depot_only=depot_only==true
+    if depot_only then o.commodity="Depot"; o.labour=0; o.inputs={} end
+    return o
+end
+local function depot_buys()
+    local n=0; for _,r in ipairs(mock.sent) do if r.command=="buy depot" then n=n+1 end end; return n
+end
+for _,rank in ipairs({"Industrialist","Manufacturer"}) do
+test(rank.." site confirms depot before factory and reconciles 3004480 including initial wages",function()
+    build_reset(rank); local channel=rank=="Industrialist" and "business" or "company"
+    local c=mock.gmcp.char[channel]; c.depots={}; mock:fireEvent("gmcp.char."..channel)
+    local proposal,result,err
+    local h=assert(API.company.prepareFactory(context,site_options(),function(v,e) proposal,err=v,e end)); build_fresh(rank,157)
+    assert(proposal,tostring(err)); equal(proposal.cost,3004480); equal(proposal.workers_required,157); equal(depot_buys(),0)
+    assert(h:confirm(function(v,e) result,err=v,e end)); build_fresh(rank,157)
+    equal(depot_buys(),1); equal(buys(),0)
+    c.depots={"EXAMPLE WORLD"}; c.cash=5995520; build_fresh(rank,150)
+    equal(buys(),1); equal(result,nil)
+    c.cash=3995520; c.factories[2]={number=2,planet="Example World",output="Firewalls"}; mock:fireEvent("gmcp.char."..channel)
+    assert(result,tostring(err)); equal(result.company_cash,3995520); equal(result.cost,3004480)
+    equal(result.depot_needed,true); equal(API.commands._lease,nil)
+    mock:runTimers(); equal(buys(),1); equal(depot_buys(),1)
+end)
+test(rank.." depot-only backfill buys one depot, never a factory, even at eight factories",function()
+    build_reset(rank); local channel=rank=="Industrialist" and "business" or "company"
+    local c=mock.gmcp.char[channel]; c.depots={}
+    for i=2,8 do c.factories[i]={number=i,planet="Example World",output="Firewalls"} end
+    mock:fireEvent("gmcp.char."..channel)
+    local p,r,e; local h=assert(API.company.prepareFactory(context,site_options(true),function(v,err) p,e=v,err end))
+    build_fresh(rank,7); assert(p,tostring(e)); equal(p.cost,1004480); equal(p.slot,0)
+    assert(h:confirm(function(v,err) r,e=v,err end)); build_fresh(rank,7)
+    c.depots={"Example World"}; c.cash=5995520; build_fresh(rank,0)
+    assert(r,tostring(e)); equal(r.confirmed,true); equal(buys(),0); equal(depot_buys(),1)
+end)
+end
+test("site reuses a depot and refuses unknown or duplicate ownership",function()
+    build_reset(); local p; assert(API.company.prepareFactory(context,site_options(),function(v) p=v end)); build_fresh()
+    equal(p.cost,2000000); equal(p.depot_needed,false); equal(p.workers_required,150)
+    for _,depots in ipairs({false,{"Example World","EXAMPLE WORLD"}}) do
+        build_reset(); mock.gmcp.char.company.depots=depots; mock:fireEvent("gmcp.char.company")
+        equal(API.company.prepareFactory(context,site_options(),function() end),nil); equal(depot_buys(),0)
+    end
+end)
+test("eight-factory cap, depot slots, worker and total cash bounds stop before any purchase",function()
+    for _,case in ipairs({"factories","depots","workers","cash","already_depot","no_factory"}) do
+        build_reset(); local c=mock.gmcp.char.company; c.depots={}; local o=site_options(); local e
+        if case=="factories" then for i=2,8 do c.factories[i]={number=i,planet="Example World",output="Firewalls"} end end
+        if case=="depots" then for i=1,15 do c.depots[i]="Planet "..i end end
+        if case=="cash" then c.cash=4004479 end
+        if case=="already_depot" then c.depots={"Example World"}; o=site_options(true) end
+        if case=="no_factory" then c.factories={}; o=site_options(true) end
+        mock:fireEvent("gmcp.char.company")
+        assert(API.company.prepareFactory(context,o,function(_,err) e=err end)); build_fresh(nil,case=="workers" and 156 or 2500)
+        assert(e,case); equal(depot_buys(),0); equal(buys(),0)
+    end
+end)
+test("partial depot outcomes never replay or advance on bad evidence or lost authority",function()
+    for _,case in ipairs({"debit","missing","stock","workers","authority","cancel","timeout"}) do
+        build_reset(); local c=mock.gmcp.char.company; c.depots={}; mock:fireEvent("gmcp.char.company")
+        local e; local h=assert(API.company.prepareFactory(context,site_options(),function() end)); build_fresh()
+        assert(h:confirm(function(_,err) e=err end)); build_fresh(); equal(depot_buys(),1)
+        c.depots=case=="missing" and {} or {"Example World"}; c.cash=case=="debit" and 5995521 or 5995520
+        if case=="stock" then mock.gmcp.exchange.commodities.Semiconductors.stock=4999 end
+        if case=="authority" then API._modules[context.module_id].spec.authorize=function(op) return op~="company.factory.continue" end end
+        if case=="cancel" then h:cancel("OFF") elseif case=="timeout" then mock:runTimers() else build_fresh(nil,case=="workers" and 149 or 2500) end
+        equal(buys(),0); equal(depot_buys(),1); equal(h:status().uncertain,true); equal(API.commands._lease,nil)
+        if case~="cancel" then code(e,"E_FACTORY_UNCONFIRMED") end
+        mock:runTimers(); equal(buys(),0); equal(depot_buys(),1)
+    end
+end)
+test("new depot appearing between preview and confirm cancels instead of silently changing the order",function()
+    build_reset(); local c=mock.gmcp.char.company; c.depots={}; mock:fireEvent("gmcp.char.company")
+    local e; local h=assert(API.company.prepareFactory(context,site_options(),function() end)); build_fresh()
+    c.depots={"Example World"}; assert(h:confirm(function(_,err) e=err end)); build_fresh()
+    assert(e); equal(buys(),0); equal(depot_buys(),0)
+end)
 print(string.format("RESULT %d passed, %d failed",passed,failed))
 if failed>0 then os.exit(1) end

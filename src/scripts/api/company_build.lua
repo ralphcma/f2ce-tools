@@ -3,6 +3,9 @@
 -- intent when company.factory.buy is requested immediately before the send.
 local API,S=F2CE.API.v1,F2CE.API.v1.services
 local COST=2000000
+-- BuyDepot -> AddDepot immediately charges 7 * minimum wage 40 * 16.
+local DEPOT_COST,DEPOT_WORKERS=1004480,7
+API.company.factorySiteVersion=1
 local limits={Industrialist=8,Manufacturer=15}
 local function norm(v) return type(v)=="string" and v:lower() or "" end
 local function integer(v,lo,hi) return type(v)=="number" and v==math.floor(v) and v>=lo and v<=hi end
@@ -26,18 +29,29 @@ local function location(options)
 end
 local function snapshot(options)
     local company,why=API.company.snapshot(); if not company then return nil,why end
-    local vitals=API.data.get("vitals"); local limit=limits[vitals.rank]
+    local vitals=API.data.get("vitals") or {}; local limit=limits[vitals.rank]
     local where=location(options)
     if not limit or not where then return nil,failure("Industrialist/Manufacturer at the selected exchange required") end
     if not integer(company.cash,0,10000000000) then return nil,failure("company cash unavailable") end
-    local roster,slot={},nil
+    local roster,slot,count,local_factory={},nil,0,false
     for _,f in pairs(company.factories) do
         if type(f)~="table" or not integer(f.number,1,limit) or roster[f.number]
             or not S.name(f.planet,true) or not S.name(f.output) then return nil,failure("invalid company factory roster") end
         roster[f.number]={number=f.number,planet=f.planet,output=f.output}
+        count=count+1; local_factory=local_factory or norm(f.planet)==norm(options.planet)
     end
     for i=1,limit do if not roster[i] then slot=i; break end end
-    return {owner=company.name,ceo=company.ceo,rank=vitals.rank,location=where,roster=roster,slot=slot,cash=company.cash}
+    if count>=math.min(limit,options.factory_limit or limit) then slot=nil end
+    local depots,depot_count={},0
+    if options.require_depot then
+        if type(company.depots)~="table" then return nil,failure("owned depot roster unavailable") end
+        for _,planet in pairs(company.depots) do
+            if not S.name(planet,true) or depots[norm(planet)] then return nil,failure("invalid owned depot roster") end
+            depots[norm(planet)]=true; depot_count=depot_count+1
+        end
+    end
+    return {owner=company.name,ceo=company.ceo,rank=vitals.rank,location=where,roster=roster,slot=slot,cash=company.cash,
+        depots=depots,depot_count=depot_count,local_factory=local_factory}
 end
 local function validate_options(o)
     if type(o)~="table" or not S.name(o.planet,true) or not S.name(o.system,true) or norm(o.system)=="sol"
@@ -45,6 +59,10 @@ local function validate_options(o)
         or not integer(o.company_reserve,0,10000000000) or not integer(o.labour,0,1000000)
         or type(o.biological_required)~="boolean" or not integer(o.output_price_floor,1,1000000)
         or type(o.inputs)~="table" or #o.inputs>6 then return false end
+    if o.require_depot~=nil and type(o.require_depot)~="boolean" then return false end
+    if o.depot_only~=nil and type(o.depot_only)~="boolean" then return false end
+    if o.factory_limit~=nil and not integer(o.factory_limit,1,15) then return false end
+    if o.depot_only and (not o.require_depot or o.labour~=0 or #o.inputs~=0 or o.commodity~="Depot") then return false end
     local seen={}
     for _,input in ipairs(o.inputs) do
         if type(input)~="table" or not S.name(input.commodity) or seen[norm(input.commodity)]
@@ -55,8 +73,14 @@ local function validate_options(o)
     return true
 end
 local function ready(state,report,o)
-    if not state.slot then return nil,failure("no free factory slot") end
-    if state.cash-COST<o.company_reserve then return nil,failure("2m construction cost would breach company reserve") end
+    local needs_depot=o.require_depot==true and not state.depots[norm(o.planet)]
+    if o.depot_only then
+        if not state.local_factory or not needs_depot then return nil,failure("depot-only build requires an owned factory and no depot on this planet") end
+    elseif not state.slot then return nil,failure("no free factory slot under the configured limit") end
+    if needs_depot and state.depot_count>=(state.rank=="Industrialist" and 16 or 15) then return nil,failure("no free depot slot") end
+    local cost=(o.depot_only and 0 or COST)+(needs_depot and DEPOT_COST or 0)
+    local labour=o.labour+(needs_depot and DEPOT_WORKERS or 0)
+    if state.cash-cost<o.company_reserve then return nil,failure("factory/depot construction cost would breach company reserve") end
     local stamina=API.data.get("stamina")
     local threshold=math.max(25,tonumber(API.settings.get("stamina","threshold")) or 0)
     if type(stamina)~="table" or not integer(tonumber(stamina.max),1,1000000)
@@ -65,7 +89,7 @@ local function ready(state,report,o)
         or (API.protection and API.protection.isRecovering()) then return nil,failure("recover stamina/death protection before construction") end
     local workers=report and report.planets and report.planets[norm(o.planet)]
     if not workers or norm(report.system)~=norm(o.system) or workers.closed
-        or not integer(workers.available,0,1000000000) or workers.available<o.labour
+        or not integer(workers.available,0,1000000000) or workers.available<labour
         or workers.economy=="None" or (o.biological_required and workers.economy~="Biological") then
         return nil,failure("workers, economy or visitor access do not qualify")
     end
@@ -76,8 +100,8 @@ local function ready(state,report,o)
         normalized[key]=row
     end
     local output=normalized[norm(o.commodity)]
-    if type(output)~="table" or not integer(tonumber(output.buy),1,1000000)
-        or tonumber(output.buy)<o.output_price_floor then return nil,failure("output bid below reviewed price") end
+    if not o.depot_only and (type(output)~="table" or not integer(tonumber(output.buy),1,1000000)
+        or tonumber(output.buy)<o.output_price_floor) then return nil,failure("output bid below reviewed price") end
     for _,input in ipairs(o.inputs) do
         local row=normalized[norm(input.commodity)]
         if type(row)~="table" or not integer(tonumber(row.stock),input.minimum_stock,1000000000)
@@ -86,8 +110,9 @@ local function ready(state,report,o)
         end
     end
     return {owner=state.owner,ceo=state.ceo,rank=state.rank,planet=o.planet,system=o.system,commodity=o.commodity,
-        slot=state.slot,cost=COST,company_cash=state.cash,company_reserve=o.company_reserve,
-        after_build=state.cash-COST,workers_available=workers.available,workers_required=o.labour,economy=workers.economy}
+        slot=o.depot_only and 0 or state.slot,cost=cost,company_cash=state.cash,company_reserve=o.company_reserve,
+        depot_needed=needs_depot,depot_only=o.depot_only==true,require_depot=o.require_depot==true,
+        after_build=state.cash-cost,workers_available=workers.available,workers_required=labour,economy=workers.economy}
 end
 function API.company.prepareFactory(context,options,callback)
     local o=S.copy(options)
@@ -163,12 +188,13 @@ function API.company.prepareFactory(context,options,callback)
         read_all(function(before,report)
             local proposal,err=ready(before,report,o)
             if not proposal then finish(nil,err); return end
-            if not equal(before.roster,preview.roster) then finish(nil,failure("factory roster changed since preview")); return end
+            if not equal(before.roster,preview.roster) or not equal(before.depots,preview.depots) then finish(nil,failure("factory/depot roster changed since preview")); return end
             -- The explicit consumer authorization records intent durably HERE,
             -- not at preview time. Denial means no purchase is sent.
             local payload=S.copy(o); payload.proposal=proposal
             local allowed,why=S.authorize(context,"company.factory.buy",payload)
             if not allowed then finish(nil,why); return end
+            local function buy_factory(base)
             phase,sent="settling",true
             local ok,problem=lease:send("buy factory "..o.commodity,{operation="company.factory.buy",reason="explicit single-factory confirmation"})
             if not ok then finish(nil,problem); return end
@@ -180,12 +206,12 @@ function API.company.prepareFactory(context,options,callback)
                 if not active or mine~=epoch or not event.received then return end
                 local after,invalid=snapshot(o)
                 if not identity(after) then finish(nil,invalid or failure("identity changed after purchase")); return end
-                local expected=S.copy(before.roster)
-                expected[before.slot]={number=before.slot,planet=o.planet,output=o.commodity}
+                local expected=S.copy(base.roster)
+                expected[base.slot]={number=base.slot,planet=o.planet,output=o.commodity}
                 local actual=S.copy(after.roster)
                 for _,f in pairs(actual) do f.planet=norm(f.planet); f.output=norm(f.output) end
                 for _,f in pairs(expected) do f.planet=norm(f.planet); f.output=norm(f.output) end
-                if not equal(actual,expected) or after.cash~=before.cash-COST then
+                if not equal(actual,expected) or not equal(after.depots,base.depots) or after.cash~=base.cash-COST then
                     finish(nil,failure("company cash and exact new factory slot did not reconcile")); return
                 end
                 proposal.confirmed=true; proposal.company_cash=after.cash; finish(proposal)
@@ -194,6 +220,27 @@ function API.company.prepareFactory(context,options,callback)
             local requested,read_error=lease:send(channel=="business" and "di business" or "di company",
                 {operation="company.factory.preview",reason="reconcile single factory purchase"})
             if not requested then finish(nil,read_error) end
+            end
+            if not proposal.depot_needed then buy_factory(before); return end
+            -- One confirmation covers this explicitly priced site. The depot
+            -- must reconcile first; a partial site never automatically retries.
+            phase,sent="settling_depot",true
+            local ok,problem=lease:send("buy depot",{operation="company.factory.buy",reason="explicit factory-site depot confirmation"})
+            if not ok then finish(nil,problem); return end
+            read_all(function(after,report_after)
+                local expected=S.copy(before.depots); expected[norm(o.planet)]=true
+                if not equal(after.roster,before.roster) or not equal(after.depots,expected) or after.cash~=before.cash-DEPOT_COST then
+                    finish(nil,failure("depot roster and exact 1004480ig debit (including initial wages) did not reconcile")); return
+                end
+                if o.depot_only then
+                    proposal.confirmed=true; proposal.company_cash=after.cash; finish(proposal); return
+                end
+                local checked,invalid=ready(after,report_after,o)
+                if not checked or checked.slot~=proposal.slot then finish(nil,invalid or failure("factory slot changed after depot")); return end
+                local permitted,denied=S.authorize(context,"company.factory.continue",payload)
+                if not permitted then finish(nil,denied); return end
+                buy_factory(after)
+            end)
         end)
         return true
     end

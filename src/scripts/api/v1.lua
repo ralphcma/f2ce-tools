@@ -1040,6 +1040,8 @@ function API._install(adapter)
         "system workforce/economy snapshot with ordered company read fence")
     capability("company.factory.build", API.company ~= nil and type(API.company.prepareFactory)=="function",
         "explicit current-exchange single-factory preview/confirm")
+    capability("company.factory.site", API.company ~= nil and API.company.factorySiteVersion==1,
+        "bounded factory plus missing depot, or owned-factory depot backfill; explicit preview/confirm")
     capability("company.depot.read", API.company ~= nil and type(API.company.depot) == "function"
         and type(adapter.observeLine) == "function" and type(adapter.unobserveLine) == "function"
         and type(adapter.parseDepot) == "function", "owner-bound depot display with ordered read fence")

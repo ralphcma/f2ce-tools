@@ -1,12 +1,17 @@
 param(
     [Parameter(Mandatory = $true)][string]$MuddlerJar,
     [string]$JavaCommand = 'java',
-    [string]$OutputDirectory
+    [string]$OutputDirectory,
+    [string]$VersionOverride
 )
 $ErrorActionPreference = 'Stop'
 $repoPath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $manifestPath = Join-Path $repoPath 'mfile'
 $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+if ($VersionOverride) {
+    if ($VersionOverride -notmatch '^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$') { throw 'Invalid package version override' }
+    $manifest.version = $VersionOverride
+}
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $repoPath 'build' }
 $outputPath = [IO.Path]::GetFullPath($OutputDirectory)
 New-Item -ItemType Directory -Path $outputPath -Force | Out-Null
@@ -14,6 +19,9 @@ $stagePath = Join-Path $repoPath ('build\native-stage-' + [Guid]::NewGuid().ToSt
 New-Item -ItemType Directory -Path $stagePath -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $repoPath 'src') -Destination (Join-Path $stagePath 'src') -Recurse
 Copy-Item -LiteralPath $manifestPath -Destination (Join-Path $stagePath 'mfile')
+if ($VersionOverride) {
+    [IO.File]::WriteAllText((Join-Path $stagePath 'mfile'), ($manifest | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))
+}
 
 # Match the release workflow's dependency injection in the disposable build
 # stage. Never edit the checkout or a live profile to produce an artifact.
