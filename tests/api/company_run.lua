@@ -531,6 +531,50 @@ test("factory preview refuses missing workers, bad economy, stock, bid, reserves
         assert(err,case); equal(buys(),0); equal(API.commands._lease,nil); equal(h:status().active,false)
     end
 end)
+test("price-review preview returns worse live quotes without buying; confirmation uses those exact bounds",function()
+    build_reset(); local o=build_options(); o.review_prices=true
+    mock.gmcp.exchange.commodities.Firewalls.buy=799
+    mock.gmcp.exchange.commodities.Semiconductors.sell=301
+    local p,err,result,payload
+    API._modules[context.module_id].spec.authorize=function(op,data) if op=="company.factory.buy" then payload=data end; return true end
+    local h=assert(API.company.prepareFactory(context,o,function(v,e) p,err=v,e end)); build_fresh()
+    assert(p,tostring(err)); equal(p.market_review.required,true); equal(p.market_review.output.previous_price,800)
+    equal(p.market_review.output.current_price,799); equal(p.market_review.inputs[1].current_price,301)
+    equal(o.output_price_floor,800); equal(o.inputs[1].price_limit,300); equal(buys(),0)
+    assert(h:confirm(function(v,e) result,err=v,e end)); build_fresh()
+    equal(payload.output_price_floor,799); equal(payload.inputs[1].price_limit,301); equal(buys(),1)
+    mock.gmcp.char.company.cash=5000000; mock.gmcp.char.company.factories[2]={number=2,planet="Example World",output="Firewalls"}
+    mock:fireEvent("gmcp.char.company"); assert(result,tostring(err)); equal(result.confirmed,true)
+end)
+test("price review never weakens stock, output demand, workers or reserve checks",function()
+    for _,case in ipairs({"stock","demand","workers","reserve"}) do
+        build_reset(); local o=build_options(); o.review_prices=true; local err
+        mock.gmcp.exchange.commodities.Firewalls.buy=799
+        if case=="stock" then mock.gmcp.exchange.commodities.Semiconductors.stock=4999 end
+        if case=="demand" then mock.gmcp.exchange.commodities.Firewalls.buy=0 end
+        if case=="reserve" then o.company_reserve=5000001 end
+        assert(API.company.prepareFactory(context,o,function(_,e) err=e end)); build_fresh(nil,case=="workers" and 149 or 2500)
+        assert(err,case); equal(buys(),0); equal(API.commands._lease,nil)
+    end
+end)
+test("price-review opt-in does not rebase a worse quote again at confirmation",function()
+    for _,case in ipairs({"bid","ask"}) do
+        build_reset(); local o=build_options(); o.review_prices=true; local p,err
+        mock.gmcp.exchange.commodities.Firewalls.buy=799
+        local h=assert(API.company.prepareFactory(context,o,function(v,e) p,err=v,e end)); build_fresh(); assert(p)
+        if case=="bid" then mock.gmcp.exchange.commodities.Firewalls.buy=798 else mock.gmcp.exchange.commodities.Semiconductors.sell=301 end
+        assert(h:confirm(function(_,e) err=e end)); build_fresh()
+        assert(err,case); equal(buys(),0); equal(API.commands._lease,nil)
+    end
+end)
+test("favourable reviewed prices do not change the original authorized bounds",function()
+    build_reset(); local o=build_options(); o.review_prices=true; local p
+    mock.gmcp.exchange.commodities.Semiconductors.sell=299
+    local h=assert(API.company.prepareFactory(context,o,function(v) p=v end)); build_fresh()
+    equal(p.market_review.required,false)
+    mock.gmcp.exchange.commodities.Firewalls.buy=800; mock.gmcp.exchange.commodities.Semiconductors.sell=300
+    assert(h:confirm(function() end)); build_fresh(); equal(buys(),1)
+end)
 test("factory refuses Sol, wrong rank/location and injected names before reads",function()
     for _,case in ipairs({"sol","rank","location","commodity","input","reserve"}) do
         build_reset(); local o=build_options()
@@ -632,12 +676,14 @@ test("eight-factory cap, depot slots, worker and total cash bounds stop before a
     end
 end)
 test("partial depot outcomes never replay or advance on bad evidence or lost authority",function()
-    for _,case in ipairs({"debit","missing","stock","workers","authority","cancel","timeout"}) do
+    for _,case in ipairs({"debit","missing","stock","workers","authority","cancel","timeout","price"}) do
         build_reset(); local c=mock.gmcp.char.company; c.depots={}; mock:fireEvent("gmcp.char.company")
-        local e; local h=assert(API.company.prepareFactory(context,site_options(),function() end)); build_fresh()
+        local o=site_options(); o.review_prices=true
+        local e; local h=assert(API.company.prepareFactory(context,o,function() end)); build_fresh()
         assert(h:confirm(function(_,err) e=err end)); build_fresh(); equal(depot_buys(),1)
         c.depots=case=="missing" and {} or {"Example World"}; c.cash=case=="debit" and 5995521 or 5995520
         if case=="stock" then mock.gmcp.exchange.commodities.Semiconductors.stock=4999 end
+        if case=="price" then mock.gmcp.exchange.commodities.Firewalls.buy=799 end
         if case=="authority" then API._modules[context.module_id].spec.authorize=function(op) return op~="company.factory.continue" end end
         if case=="cancel" then h:cancel("OFF") elseif case=="timeout" then mock:runTimers() else build_fresh(nil,case=="workers" and 149 or 2500) end
         equal(buys(),0); equal(depot_buys(),1); equal(h:status().uncertain,true); equal(API.commands._lease,nil)

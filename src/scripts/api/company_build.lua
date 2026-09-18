@@ -6,6 +6,7 @@ local COST=2000000
 -- BuyDepot -> AddDepot immediately charges 7 * minimum wage 40 * 16.
 local DEPOT_COST,DEPOT_WORKERS=1004480,7
 API.company.factorySiteVersion=1
+API.company.factoryPriceReviewVersion=1
 local limits={Industrialist=8,Manufacturer=15}
 local function norm(v) return type(v)=="string" and v:lower() or "" end
 local function integer(v,lo,hi) return type(v)=="number" and v==math.floor(v) and v>=lo and v<=hi end
@@ -61,6 +62,7 @@ local function validate_options(o)
         or type(o.inputs)~="table" or #o.inputs>6 then return false end
     if o.require_depot~=nil and type(o.require_depot)~="boolean" then return false end
     if o.depot_only~=nil and type(o.depot_only)~="boolean" then return false end
+    if o.review_prices~=nil and type(o.review_prices)~="boolean" then return false end
     if o.factory_limit~=nil and not integer(o.factory_limit,1,15) then return false end
     if o.depot_only and (not o.require_depot or o.labour~=0 or #o.inputs~=0 or o.commodity~="Depot") then return false end
     local seen={}
@@ -72,7 +74,7 @@ local function validate_options(o)
     end
     return true
 end
-local function ready(state,report,o)
+local function ready(state,report,o,review_prices)
     local needs_depot=o.require_depot==true and not state.depots[norm(o.planet)]
     if o.depot_only then
         if not state.local_factory or not needs_depot then return nil,failure("depot-only build requires an owned factory and no depot on this planet") end
@@ -100,19 +102,45 @@ local function ready(state,report,o)
         normalized[key]=row
     end
     local output=normalized[norm(o.commodity)]
-    if not o.depot_only and (type(output)~="table" or not integer(tonumber(output.buy),1,1000000)
-        or tonumber(output.buy)<o.output_price_floor) then return nil,failure("output bid below reviewed price") end
+    local review
+    if not o.depot_only then
+        if type(output)~="table" or not integer(tonumber(output.buy),1,1000000) then
+            return nil,failure("exchange is not buying the factory output")
+        end
+        local price=tonumber(output.buy)
+        if review_prices then
+            review={required=price<o.output_price_floor,
+                output={commodity=o.commodity,previous_price=o.output_price_floor,current_price=price},inputs={},
+                material_before=75*o.output_price_floor,material_now=75*price}
+            -- Only a preview may propose worse bounds. They are frozen before
+            -- confirmation and included in the consumer authorization payload.
+            o.output_price_floor=math.min(o.output_price_floor,price)
+        elseif price<o.output_price_floor then
+            return nil,failure(string.format("output bid %dig below confirmed minimum %dig; refresh the build preview",price,o.output_price_floor))
+        end
+    end
     for _,input in ipairs(o.inputs) do
         local row=normalized[norm(input.commodity)]
         if type(row)~="table" or not integer(tonumber(row.stock),input.minimum_stock,1000000000)
-            or not integer(tonumber(row.sell),1,1000000) or tonumber(row.sell)>input.price_limit then
-            return nil,failure("local input stock/ask no longer meets reviewed bounds: "..input.commodity)
+            or not integer(tonumber(row.sell),1,1000000) then
+            return nil,failure("local input stock/ask unavailable or below required stock: "..input.commodity)
+        end
+        local price=tonumber(row.sell)
+        if review then
+            review.required=review.required or price>input.price_limit
+            review.inputs[#review.inputs+1]={commodity=input.commodity,previous_price=input.price_limit,current_price=price}
+            review.material_before=review.material_before-input.required*input.price_limit
+            review.material_now=review.material_now-input.required*price
+            input.price_limit=math.max(input.price_limit,price)
+        elseif price>input.price_limit then
+            return nil,failure(string.format("%s input ask %dig above confirmed maximum %dig; refresh the build preview",input.commodity,price,input.price_limit))
         end
     end
     return {owner=state.owner,ceo=state.ceo,rank=state.rank,planet=o.planet,system=o.system,commodity=o.commodity,
         slot=o.depot_only and 0 or state.slot,cost=cost,company_cash=state.cash,company_reserve=o.company_reserve,
         depot_needed=needs_depot,depot_only=o.depot_only==true,require_depot=o.require_depot==true,
-        after_build=state.cash-cost,workers_available=workers.available,workers_required=labour,economy=workers.economy}
+        after_build=state.cash-cost,workers_available=workers.available,workers_required=labour,economy=workers.economy,
+        market_review=review}
 end
 function API.company.prepareFactory(context,options,callback)
     local o=S.copy(options)
@@ -246,7 +274,7 @@ function API.company.prepareFactory(context,options,callback)
     end
     token=context:own("company.factory.preview",handle,function(value) value:cancel("module_cleanup") end)
     read_all(function(state,report)
-        local proposal,err=ready(state,report,o)
+        local proposal,err=ready(state,report,o,o.review_prices==true)
         if not proposal then finish(nil,err); return end
         preview=state; phase="ready"
         if not bound(30,function() finish(nil,failure("factory preview expired")) end) then return end

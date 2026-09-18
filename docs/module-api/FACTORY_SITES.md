@@ -4,6 +4,18 @@ Additive native contract: `API.company.factorySiteVersion == 1`, exposed as
 `company.factory.site`. Existing single-factory API callers remain compatible.
 No module is armed or started by loading the API.
 
+The additive `API.company.factoryPriceReviewVersion == 1` contract accepts
+`review_prices=true`. During the initial preview only, valid live bids/asks can
+replace worse scan bounds. `proposal.market_review` carries `required`, the
+output and input `previous_price` / `current_price` pairs, and material
+contribution before/now per 75t batch (excluding wages and other costs).
+`required=true` MUST revoke the consumer's old purchase confirmation and present
+the updated terms for new explicit approval. No purchase occurs at preview.
+Favourable quotes retain the old bounds; legacy callers remain strict.
+The reviewed bounds are frozen for confirmation and depot-to-factory continuation;
+neither phase silently rebases worse prices. Stock, demand, workers and all other
+construction guards still apply even to the initial price-review preview.
+
 `prepareFactory(context, options, callback)` additionally accepts:
 
 - `require_depot=true`: reuse a named owned depot, or explicitly quote and buy
