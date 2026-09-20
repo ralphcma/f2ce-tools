@@ -1,10 +1,11 @@
 # Factory automation API — 2026-09-20
 
-Integration package: `3.3.0-native-ew31`. This follows the existing ew30 build
-and adds the bounded automation/wage-verification service described below.
-It supersedes the incorrectly numbered `ew29-pr` / `ew29-factory-auto`
-candidate artifacts. The manifest now carries ew31, so ordinary builds no
-longer need a version override. This remains an upstream-review candidate.
+Integration package: `3.3.0-native-ew32`. This follows ew31 and fixes the
+ordering of wage verification after purchase, plus settled-handle cleanup.
+ew31 added the bounded automation service described below and superseded the
+incorrectly numbered `ew29-pr` / `ew29-factory-auto` candidates. The manifest
+carries the package version; ordinary builds need no version override.
+This remains an upstream-review candidate.
 
 `API.company.factoryAutomationVersion == 1` advertises optional bounded
 automation fields on the existing `prepareFactory` / `confirm` operation.
@@ -21,11 +22,20 @@ after the requested wage. No automatic native retry or general growth loop.
 
 After the factory slot and exact company debit reconcile, the service asks the
 consumer to authorize `company.factory.wages` with the original bounded build
-payload. It sends `set factory <new slot> wages 40` once, requests the complete
-factory display, and checks owner/product/planet/slot/wage. Completion includes
+payload. It sends `set factory <new slot> wages 40` once and waits for the exact
+server acknowledgement matching slot, product, planet and wage. Only then does
+it request the complete factory display and check owner/product/planet/slot/wage.
+Buying a factory also prints its initial display, which can arrive after its
+GMCP update: all pre-acknowledgement displays are ignored, even if they report
+40ig. The acknowledgement has a 15-second deadline, followed by a separate
+15-second display deadline. Wrapped/colored acknowledgement text is accepted
+within bounded line/character limits. Completion includes
 `wages=40` and `wages_confirmed=true`. Failure retains an uncertain result and
 never repeats construction. The consumer must journal before the first depot
 or factory send and close that intent only after wage verification as well.
+Cleanup or a late cancellation preserves a completed handle's confirmed state.
+Existing uncertain journals are not automatically cleared or replayed by this
+update. Inspect the actual assets and wages before consumer-side reconciliation.
 
 Depot-only operations have no factory wage write. Default load/reconnect grants
 no automation authority. A consumer's explicit Start must provide a bounded
@@ -33,6 +43,8 @@ session, budget, identity fencing, shutdown cleanup and per-site selection.
 
 Offline coverage: `tests/api/company_run.lua` checks both company ranks,
 two-per-planet/reserved-workforce/contribution limits, exact wage command,
-complete display verification, lost authority, timeout and cancellation.
+pre-acknowledgement purchase displays, matching/wrapped/malformed acknowledgements,
+complete display verification, lost authority, timeout, cancellation, and combined
+depot/factory purchases. Successful completion remains confirmed after cleanup.
 FedHauler consumer tests additionally cover batch limits and native integration.
 No public-server or graphical profile acceptance is claimed by these tests.

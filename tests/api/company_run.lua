@@ -704,6 +704,12 @@ end
 local function wage_commands()
     local n=0; for _,r in ipairs(mock.sent) do if r.command:match("^set factory ") then n=n+1 end end; return n
 end
+local function wage_reads()
+    local n=0; for _,r in ipairs(mock.sent) do if r.command=="display factory 2" then n=n+1 end end; return n
+end
+local function wage_ack()
+    observer("The wages for workers in factory #2 (Firewalls on Example World) have been set to 40.")
+end
 for _,rank in ipairs({"Industrialist","Manufacturer"}) do
 test(rank.." automatic build verifies new factory then sets exactly 40 wages once",function()
     build_reset(rank); local proposal,result,err
@@ -713,11 +719,33 @@ test(rank.." automatic build verifies new factory then sets exactly 40 wages onc
     local channel=rank=="Industrialist" and "business" or "company"; local c=mock.gmcp.char[channel]
     c.cash=5000000; c.factories[2]={number=2,planet="Example World",output="Firewalls"}
     mock:fireEvent("gmcp.char."..channel); equal(wage_commands(),1); equal(result,nil)
-    equal(h:status().phase,"setting_wages"); equal(mock.sent[#mock.sent-1].command,"set factory 2 wages 40")
+    equal(h:status().phase,"setting_wages"); equal(mock.sent[#mock.sent].command,"set factory 2 wages 40")
+    equal(wage_reads(),0)
+    wage_ack(); equal(h:status().phase,"verifying_wages"); equal(wage_reads(),1)
     equal(mock.sent[#mock.sent].command,"display factory 2")
     for _,line in ipairs(lines(fixture:gsub("Facility #1","Facility #2"))) do observer(line) end
     assert(result,tostring(err)); equal(result.wages,40); equal(result.wages_confirmed,true); equal(API.commands._lease,nil)
     equal(h:confirm(function() end),nil); equal(buys(),1); equal(wage_commands(),1)
+end)
+test(rank.." purchase display cannot finish wage verification before its acknowledgement",function()
+    build_reset(rank); local result,err
+    local h=assert(API.company.prepareFactory(context,auto_options(),function() end)); build_fresh(rank)
+    assert(h:confirm(function(v,e) result,err=v,e end)); build_fresh(rank)
+    local channel=rank=="Industrialist" and "business" or "company"; local c=mock.gmcp.char[channel]
+    c.cash=5000000; c.factories[2]={number=2,planet="Example World",output="Firewalls"}
+    mock:fireEvent("gmcp.char."..channel)
+    local early=fixture:gsub("Facility #1","Facility #2"):gsub("Wages: 40ig","Wages: 0ig")
+    local callback=observer
+    for _,line in ipairs(lines(early)) do callback(line) end
+    assert(not err,"the initial 0ig purchase display is not a failed wage verification: "..tostring(err))
+    equal(result,nil); equal(h:status().active,true); equal(wage_reads(),0)
+    -- Even a complete pre-ack display claiming 40 is not fresh requested evidence.
+    for _,line in ipairs(lines(early:gsub("Wages: 0ig","Wages: 40ig"))) do callback(line) end
+    equal(result,nil); equal(wage_reads(),0)
+    wage_ack(); equal(wage_reads(),1)
+    for _,line in ipairs(lines(early:gsub("Wages: 0ig","Wages: 40ig"))) do callback(line) end
+    assert(result,tostring(err)); equal(result.wages_confirmed,true)
+    equal(buys(),1); equal(wage_commands(),1); equal(API.commands._lease,nil)
 end)
 end
 test("automatic two-per-planet, reserved workforce and positive-after-wages gates",function()
@@ -733,15 +761,16 @@ test("automatic two-per-planet, reserved workforce and positive-after-wages gate
     end
 end)
 test("wage failure cancellation and lost authority retain uncertain purchase without retry",function()
-    for _,case in ipairs({"wrong_wage","wrong_factory","timeout","cancel","authority"}) do
+    for _,case in ipairs({"wrong_wage","wrong_factory","ack_timeout","timeout","cancel","authority"}) do
         build_reset(); local err,result
         local h=assert(API.company.prepareFactory(context,auto_options(),function() end)); build_fresh()
         assert(h:confirm(function(v,e) result,err=v,e end)); build_fresh()
         if case=="authority" then API._modules[context.module_id].spec.authorize=function(op) return op~="company.factory.wages" end end
         local c=mock.gmcp.char.company; c.cash=5000000; c.factories[2]={number=2,planet="Example World",output="Firewalls"}
         mock:fireEvent("gmcp.char.company")
+        if case~="ack_timeout" and case~="cancel" and case~="authority" then wage_ack() end
         if case=="cancel" then h:cancel("OFF")
-        elseif case=="timeout" then mock:runTimers()
+        elseif case=="timeout" or case=="ack_timeout" then mock:runTimers()
         elseif case~="authority" then
             local text=fixture:gsub("Facility #1","Facility #2")
             if case=="wrong_wage" then text=text:gsub("Wages: 40ig","Wages: 0ig") else text=text:gsub("Location: Example World","Location: Elsewhere") end
@@ -752,5 +781,93 @@ test("wage failure cancellation and lost authority retain uncertain purchase wit
         equal(h:confirm(function() end),nil); mock:runTimers(); equal(buys(),1); equal(wage_commands(),case=="authority" and 0 or 1)
     end
 end)
+local function pending_wages(rank,with_depot)
+    build_reset(rank)
+    local channel=rank=="Industrialist" and "business" or "company"
+    local c=mock.gmcp.char[channel]
+    if with_depot then c.depots={}; mock:fireEvent("gmcp.char."..channel) end
+    local completed={}
+    local h=assert(API.company.prepareFactory(context,auto_options(),function() end)); build_fresh(rank)
+    assert(h:confirm(function(v,e) completed.value,completed.error=v,e end)); build_fresh(rank)
+    if with_depot then c.depots={"Example World"}; c.cash=5995520; build_fresh(rank) end
+    c.cash=with_depot and 3995520 or 5000000
+    c.factories[2]={number=2,planet="Example World",output="Firewalls"}
+    mock:fireEvent("gmcp.char."..channel)
+    equal(h:status().phase,"setting_wages"); equal(wage_commands(),1); equal(wage_reads(),0)
+    return h,completed,c
+end
+test("only exact bounded wage acknowledgement unlocks the requested display",function()
+    local h,done=pending_wages()
+    local ack="The wages for workers in factory #2 (Firewalls on Example World) have been set to 40."
+    for _,wrong in ipairs({ack:gsub("#2","#3"),ack:gsub("Firewalls","Droids"),
+        ack:gsub("Example World","Elsewhere"),ack:gsub("40%.","41."),"Someone says: "..ack,
+        ack.." extra text"}) do observer(wrong); equal(wage_reads(),0) end
+    observer("The wages for workers in factory #2")
+    for _=1,9 do observer("malformed acknowledgement continuation") end
+    observer("The wages"..string.rep("x",1100)); equal(wage_reads(),0)
+    -- Client wrapping and color sequences are allowed without widening identity.
+    observer("\27[32mThe wages for workers in factory #2 (Firewalls on\27[0m")
+    observer("Example World) have been set to 40.")
+    equal(h:status().phase,"verifying_wages"); equal(wage_reads(),1); equal(done.value,nil)
+    wage_ack(); wage_ack(); equal(wage_reads(),1)
+    local callback=observer
+    for _,line in ipairs(lines(fixture:gsub("Facility #1","Facility #2"))) do callback(line) end
+    assert(done.value,tostring(done.error)); equal(done.value.wages_confirmed,true)
+    callback(ack); equal(wage_reads(),1); equal(wage_commands(),1)
+end)
+test("missing or partial acknowledgement times out without display or replay",function()
+    local h,done=pending_wages(); local late=observer
+    late("The wages for workers in factory #2 (Firewalls on")
+    mock:runTimers()
+    code(done.error,"E_FACTORY_UNCONFIRMED"); assert(tostring(done.error):find("acknowledgement timed out",1,true))
+    equal(done.value,nil); equal(h:status().uncertain,true); equal(API.commands._lease,nil)
+    late("Example World) have been set to 40.")
+    late("The wages for workers in factory #2 (Firewalls on Example World) have been set to 40.")
+    equal(wage_reads(),0); equal(wage_commands(),1); equal(buys(),1)
+end)
+test("cancellation and module teardown reject late wage acknowledgements and displays",function()
+    for _,acknowledged in ipairs({false,true}) do for _,how in ipairs({"cancel","disable"}) do
+        local h,done=pending_wages(); local late=observer
+        if acknowledged then wage_ack() end
+        local sends=#mock.sent
+        if how=="cancel" then h:cancel("user stopped") else API.modules.disable(context.module_id) end
+        late("The wages for workers in factory #2 (Firewalls on Example World) have been set to 40.")
+        for _,line in ipairs(lines(fixture:gsub("Facility #1","Facility #2"))) do late(line) end
+        mock:runTimers(); equal(#mock.sent,sends); equal(done.value,nil)
+        equal(h:status().uncertain,true); equal(API.commands._lease,nil)
+    end end
+end)
+test("acknowledged identity changes and rejected verification sends stop without replay",function()
+    for _,how in ipairs({"identity","send"}) do
+        local h,done,c=pending_wages()
+        if how=="identity" then c.factories[2].planet="Elsewhere"; mock:fireEvent("gmcp.char.company")
+        else local original=adapter.sendCommand
+            adapter.sendCommand=function(command,options)
+                if command=="display factory 2" then return false,"verification send denied" end
+                return original(command,options)
+            end
+        end
+        wage_ack(); code(done.error,"E_FACTORY_UNCONFIRMED"); equal(done.value,nil)
+        equal(h:status().uncertain,true); equal(API.commands._lease,nil)
+        equal(wage_commands(),1); equal(buys(),1)
+    end
+end)
+for _,rank in ipairs({"Industrialist","Manufacturer"}) do
+test(rank.." depot plus factory automatic display is fenced before verified 40ig completion",function()
+    local h,done=pending_wages(rank,true)
+    local display=fixture:gsub("Facility #1","Facility #2")
+    for _,line in ipairs(lines(display:gsub("Wages: 40ig","Wages: 0ig"))) do observer(line) end
+    equal(done.error,nil); equal(wage_reads(),0); equal(depot_buys(),1)
+    wage_ack()
+    for _,line in ipairs(lines(display)) do observer(line) end
+    assert(done.value,tostring(done.error)); equal(done.value.company_cash,3995520)
+    equal(done.value.cost,3004480); equal(done.value.wages_confirmed,true)
+    equal(h:status().phase,"confirmed"); equal(depot_buys(),1); equal(buys(),1); equal(wage_commands(),1)
+    equal(h:status().active,false); equal(h:status().uncertain,false)
+    assert(h:cancel("late consumer cleanup")); mock:runTimers()
+    equal(h:status().phase,"confirmed"); equal(h:status().uncertain,false)
+    equal(depot_buys(),1); equal(buys(),1); equal(wage_commands(),1)
+end)
+end
 print(string.format("RESULT %d passed, %d failed",passed,failed))
 if failed>0 then os.exit(1) end

@@ -1,5 +1,27 @@
 # Module API verification
 
+## 2026-09-20 Factory wage acknowledgement ordering
+
+Candidate `f2ce-tools-3.3.0-native-ew32.mpackage`, SHA256
+`c754307e03d89243444d1189ed3fb90f86b71cbd39ac620082e7d8b0eb6e2fd6`.
+
+All native suites pass against source and reconstructed packaged XML: 262 Lua
+files compile, 32 metadata files parse, and 228 packaged script/trigger bodies
+match source with intended dependency injection. Company/factory coverage is
+77 passing tests; the separate private consumer integration suite has 117 passes.
+
+The regression reproduces purchase GMCP arriving before the automatic factory
+display (initial wages 0ig). Neither that display nor an early 40ig display can
+finish wage verification. Only the exact matching server acknowledgement unlocks
+one new display request; its complete, identity-checked response must show 40ig.
+Tests cover both company ranks, combined depot/factory builds, wrapped/colored
+and invalid acknowledgements, timeout, cancellation/teardown, changed identity,
+denied sends, and no duplicate writes. Cleanup and late cancellation preserve
+confirmed status. Existing uncertain journals are not cleared by the update.
+
+These are offline response-ordering and packaged-code tests, not a fresh live
+server or graphical acceptance run. No public account commands were sent.
+
 ## 2026-09-16 Single-factory confirmation and workforce capture boundary
 
 Candidate `f2ce-tools-3.3.0-native-ew27.mpackage`, SHA256

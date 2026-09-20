@@ -178,7 +178,12 @@ function API.company.prepareFactory(context,options,callback)
         active=false; clear(); lease:release(reason); S.forget(context,token); return true
     end
     function handle:status() return {active=active,phase=phase,sent=sent,uncertain=sent and phase~="confirmed"} end
-    function handle:cancel(reason) phase=sent and "unconfirmed" or "cancelled"; cleanup(reason or phase); return true end
+    function handle:cancel(reason)
+        -- Forgetting the owned cleanup token also calls cancel. Do not turn a
+        -- settled result back into an uncertain purchase during that cleanup.
+        if not active then return true end
+        phase=sent and "unconfirmed" or "cancelled"; cleanup(reason or phase); return true
+    end
     local function finish(value,err)
         if not active then return end
         phase=value and "confirmed" or (sent and "unconfirmed" or "failed")
@@ -244,10 +249,46 @@ function API.company.prepareFactory(context,options,callback)
                 if type(API._adapter.observeLine)~="function" or type(API._adapter.parseFactory)~="function" then
                     finish(nil,failure("factory wage verification unavailable")); return
                 end
-                local rows,started={},false
+                local rows,started,ack_lines={},false,{}
+                local wage_sent=false
                 observer=API._adapter.observeLine(function(line)
-                    if not active then return end
+                    if not active or type(line)~="string" then return end
                     local clean=line:gsub("\27%[[%d;]*m","")
+                    if phase=="setting_wages" then
+                        -- Buying a factory also prints a complete 0ig-wage
+                        -- display. GMCP can arrive before that text is rendered,
+                        -- so it is not evidence for the later wage command.
+                        -- Fence on its exact, bounded server acknowledgement.
+                        if not wage_sent then return end
+                        clean=clean:gsub("%s+"," "):match("^%s*(.-)%s*$")
+                        if clean:match("^The wages") then ack_lines={clean}
+                        elseif #ack_lines>0 then ack_lines[#ack_lines+1]=clean
+                        else return end
+                        local ack=table.concat(ack_lines," "):gsub("%s+"," ")
+                        if #ack_lines>8 or #ack>1024 then ack_lines={}; return end
+                        local number,commodity,planet,wages=ack:match(
+                            "^The wages for workers in factory #(%d+) %(([%w]+) on (.-)%) have been set to (%d+)%.$")
+                        if not number then return end
+                        ack_lines={}
+                        if tonumber(number)~=proposal.slot or norm(commodity)~=norm(o.commodity)
+                            or norm(planet)~=norm(o.planet) or tonumber(wages)~=o.wages then return end
+                        local state=snapshot(o)
+                        local factory=state and state.roster[proposal.slot]
+                        if not identity(state) or not factory or norm(factory.planet)~=norm(o.planet)
+                            or norm(factory.output)~=norm(o.commodity) then
+                            finish(nil,failure("factory identity changed before wage display request")); return
+                        end
+                        phase="verifying_wages"; rows,started={},false
+                        if timer then API._adapter.cancelTimer(timer); timer=nil end
+                        if not bound(15,function()
+                            if phase=="verifying_wages" then finish(nil,failure("factory wage display timed out after acknowledgement")) end
+                        end) then return end
+                        local ok,err=lease:send("display factory "..proposal.slot,
+                            {operation="company.factory.preview",reason="verify acknowledged new factory wages"})
+                        if not ok then finish(nil,err) end
+                        return
+                    end
+                    if phase~="verifying_wages" then return end
                     if clean:find("Production Facility #",1,true) then
                         if started then finish(nil,failure("multiple factory wage headers")); return end
                         started=true
@@ -256,23 +297,27 @@ function API.company.prepareFactory(context,options,callback)
                     rows[#rows+1]=clean
                     if #rows>100 then finish(nil,failure("factory wage display too long")); return end
                     if not table.concat(rows," "):gsub("%s+"," "):find("Next batch is %d+%% complete") then return end
-                    local record=API._adapter.parseFactory(rows,proposal.slot)
+                    local record,parse_error=API._adapter.parseFactory(rows,proposal.slot)
+                    if not record then finish(nil,failure("invalid factory wage display: "..tostring(parse_error))); return end
                     local state=snapshot(o)
                     local factory=state and state.roster[proposal.slot]
                     if not identity(state) or not factory or norm(factory.planet)~=norm(o.planet)
-                        or norm(factory.output)~=norm(o.commodity) or not record or record.owner~=proposal.owner
+                        or norm(factory.output)~=norm(o.commodity) or record.owner~=proposal.owner
                         or norm(record.location)~=norm(o.planet) or norm(record.commodity)~=norm(o.commodity)
-                        or record.wages~=o.wages then finish(nil,failure("factory wage setting did not reconcile")); return end
+                        then finish(nil,failure("factory wage display identity did not reconcile")); return end
+                    if record.wages~=o.wages then
+                        finish(nil,failure("factory wage display reports "..tostring(record.wages).."ig; expected "..o.wages.."ig")); return
+                    end
                     proposal.wages_confirmed=true; finish(proposal)
                 end)
                 if not observer then finish(nil,failure("factory wage observer unavailable")); return end
-                if not bound(15,function() finish(nil,failure("factory wage confirmation timed out")) end) then return end
+                if not bound(15,function()
+                    if phase=="setting_wages" then finish(nil,failure("factory wage acknowledgement timed out")) end
+                end) then return end
+                wage_sent=true
                 local ok,err=lease:send("set factory "..proposal.slot.." wages "..o.wages,
                     {operation="company.factory.wages",reason="one-click factory wage policy"})
                 if not ok then finish(nil,err); return end
-                if not active then return end
-                ok,err=lease:send("display factory "..proposal.slot,{operation="company.factory.preview",reason="verify new factory wages"})
-                if not ok then finish(nil,err) end
             end
             local function buy_factory(base)
             phase,sent="settling",true
