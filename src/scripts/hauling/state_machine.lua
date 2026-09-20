@@ -423,6 +423,7 @@ function f2t_hauling_finish_stop()
     F2T_HAULING_STATE.current_commodity = nil
     F2T_HAULING_STATE.buy_location = nil
     F2T_HAULING_STATE.sell_location = nil
+    F2T_HAULING_STATE.exchange_market = nil
     F2T_HAULING_STATE.expected_profit = 0
     F2T_HAULING_STATE.actual_cost = 0
     F2T_HAULING_STATE.current_commodity_stats = {
@@ -827,6 +828,10 @@ function f2t_hauling_transition(new_phase)
         f2t_hauling_phase_navigate_to_sell()
     elseif new_phase == "selling" then
         f2t_hauling_phase_sell()
+    elseif new_phase == "finding_buy" then
+        f2t_hauling_retry_exchange("buy")
+    elseif new_phase == "finding_sell" then
+        f2t_hauling_retry_exchange("sell")
     -- Armstrong Cuthbert phases
     elseif new_phase == "ac_fetching_jobs" then
         f2t_hauling_phase_ac_fetch_jobs()

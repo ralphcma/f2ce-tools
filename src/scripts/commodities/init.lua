@@ -77,9 +77,9 @@ function f2t_bulk_watchdog_start()
         cecho(string.format("\n<yellow>[bulk-%s]<reset> %s, aborting\n", command, reason))
 
         if command == "buy" then
-            f2t_bulk_buy_error(reason)
+            f2t_bulk_buy_error(reason, "timeout")
         else
-            f2t_bulk_sell_error(reason)
+            f2t_bulk_sell_error(reason, "timeout")
         end
     end)
 end

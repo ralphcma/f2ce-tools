@@ -82,6 +82,8 @@ function f2t_bulk_buy_start(commodity, requested_lots, callback)
     F2T_BULK_STATE.total = lots_to_buy
     F2T_BULK_STATE.callback = callback
     F2T_BULK_STATE.batched = true
+    F2T_BULK_STATE.error_reason = nil
+    F2T_BULK_STATE.error_code = nil
 
     -- Only show user feedback in user mode
     if not callback then
@@ -147,13 +149,15 @@ function f2t_bulk_buy_success()
 end
 
 -- Handle buy error (stop the bulk operation)
-function f2t_bulk_buy_error(reason)
+function f2t_bulk_buy_error(reason, code)
     if not F2T_BULK_STATE.active or F2T_BULK_STATE.command ~= "buy" then
         return
     end
 
     f2t_bulk_watchdog_stop()
 
+    F2T_BULK_STATE.error_reason = reason
+    F2T_BULK_STATE.error_code = code
     f2t_debug_log("[bulk-buy] ERROR: %s", reason)
 
     -- Only show user feedback in user mode
@@ -176,6 +180,7 @@ function f2t_bulk_buy_finish()
     local tons = bought * 75
     local commodity = F2T_BULK_STATE.commodity
     local callback = F2T_BULK_STATE.callback
+    local reason, code = F2T_BULK_STATE.error_reason, F2T_BULK_STATE.error_code
 
     f2t_debug_log("[bulk-buy] Finishing: bought %d lots of %s (%d tons)", bought, commodity, tons)
 
@@ -186,6 +191,8 @@ function f2t_bulk_buy_finish()
     F2T_BULK_STATE.callback = nil
     F2T_BULK_STATE.batched = false
     F2T_BULK_STATE.sent_command = nil
+    F2T_BULK_STATE.error_reason = nil
+    F2T_BULK_STATE.error_code = nil
 
     -- User mode: show formatted output
     if not callback then
@@ -195,6 +202,7 @@ function f2t_bulk_buy_finish()
     -- Programmatic mode: call callback with data
     else
         local status = bought > 0 and "success" or "failed"
-        callback(commodity, bought, status, nil)
+        if code == "timeout" then status = "error" end
+        callback(commodity, bought, status, reason, code)
     end
 end

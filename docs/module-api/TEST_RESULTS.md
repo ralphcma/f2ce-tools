@@ -1,5 +1,34 @@
 # Module API verification
 
+## 2026-09-20 Prompt exchange-hauling refusal failover
+
+Candidate `f2ce-tools-3.3.0-native-ew34.mpackage`, SHA256
+`3c3ee1c032e2a224ebf8a0f4ccb1690e6148c11fc655a39fea581279fd636496`.
+
+All native suites pass on source and reconstructed package: 264 Lua syntax
+checks, 32 metadata checks, and 229 packaged script/trigger bodies matching
+source. The new hauling refusal suite has 27 tests, alongside the three counted
+bulk-command tests. The FedHauler native integration suite passes all 119 tests.
+Full and line-wrapped Galactic Administration restriction messages are checked
+against the trigger regex, as well as unrelated text that must not match.
+
+Explicit unavailable-supplier and unavailable/restricted-buyer replies cancel
+the bulk watchdog and carry a classified reason to exchange hauling. Its cached
+alternatives are tried immediately, with per-commodity, direction, system and
+planet exclusion instead of a changing sorted-list index. An exhausted cache
+gets one fresh price request. Configured margin checks still apply. Partial
+loads are delivered, partial sales keep the remainder, exhausted suppliers skip
+the commodity and exhausted eligible buyers stop with cargo aboard. These are
+temporary commodity-pass exclusions, not persistent navigation blacklists.
+
+Regression coverage includes reordered prices, invalid/empty replies, stale
+callbacks after stop or commodity changes, deferred pause and explicit resume,
+graceful stop, partial timeout handling, mixed-cargo timeout cancellation and
+reentrant bulk callbacks. Timed-out exchange trades, including cleanup/dump
+paths, do not authorize another order or jettison. Existing native PO routing
+policy is not redesigned here. No live accounts were driven, packages installed,
+or gameplay purchases made for this verification.
+
 ## 2026-09-20 All-company factory commodity exclusion
 
 Candidate `f2ce-tools-3.3.0-native-ew33.mpackage`, SHA256

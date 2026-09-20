@@ -9,6 +9,16 @@
 > for native Walker or FedHauler 1.16.0. Walker adds a Founder+ tab beside
 > Who/Events/Exchange, with a sortable remote exchange table and bottom controls.
 
+Native candidate **ew34** fixes exchange/premium hauling refusal handling:
+Galactic Administration sale restrictions and not-buying/not-selling replies
+advance immediately to an eligible cached alternative, without waiting for the
+15-second bulk watchdog. Refused locations are excluded for that commodity and
+trade direction until the next commodity pass; they are not map blacklists.
+An exhausted cache gets one price refresh. No remaining supplier skips the
+commodity; no eligible buyer stops with cargo aboard. Configured margin checks,
+pause/stop controls and counted bulk commands remain in place. Uncertain timed-out
+exchange trades stop instead of authorizing another trade.
+
 A Mudlet package for [Federation 2 Community Edition](https://federation2.com) — mapping, navigation, automated trading, factory management, planet-owner tools, and quality-of-life automation, with an optional [Muxlet](https://github.com/tmtocloud/Muxlet)-based GUI.
 
 Independent packages should use Muxlet's `Mux.registerContent` for visual content and workspace integration. For behind-the-scenes F2CE features—such as navigation, hauling, prices, copied game state, and map queries—they should use the versioned `F2CE.API.v1` boundary instead of reading or replacing `F2T_*`/`f2t_*` implementation globals. See the [module API architecture](docs/module-api/ARCHITECTURE.md), [reference](docs/module-api/API_REFERENCE.md), and [example module](examples/module_api_v1/example_module.lua).

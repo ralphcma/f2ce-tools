@@ -118,6 +118,8 @@ function f2t_bulk_sell_start(commodity, requested_lots, callback)
         F2T_BULK_STATE.total_sold = 0
         F2T_BULK_STATE.callback = callback
         F2T_BULK_STATE.batched = true
+        F2T_BULK_STATE.error_reason = nil
+        F2T_BULK_STATE.error_code = nil
         F2T_BULK_STATE.sell_all_cargo = #all_commodities == 1
         -- Aggregate stats across all commodities
         F2T_BULK_STATE.aggregate_cost = 0
@@ -167,6 +169,8 @@ function f2t_bulk_sell_start(commodity, requested_lots, callback)
     F2T_BULK_STATE.commodity_queue = nil
     F2T_BULK_STATE.callback = callback
     F2T_BULK_STATE.batched = true
+    F2T_BULK_STATE.error_reason = nil
+    F2T_BULK_STATE.error_code = nil
     F2T_BULK_STATE.sell_all_cargo = lots_to_sell == #(gmcp.char.ship.cargo or {})
     F2T_BULK_STATE.total_cost = total_cost
     F2T_BULK_STATE.total_revenue = 0
@@ -297,13 +301,15 @@ function f2t_bulk_sell_success(_commodity, revenue_per_ton, revenue_total)
 end
 
 -- Handle sell error (stop the bulk operation)
-function f2t_bulk_sell_error(reason)
+function f2t_bulk_sell_error(reason, code)
     if not F2T_BULK_STATE.active or F2T_BULK_STATE.command ~= "sell" then
         return
     end
 
     f2t_bulk_watchdog_stop()
 
+    F2T_BULK_STATE.error_reason = reason
+    F2T_BULK_STATE.error_code = code
     f2t_debug_log("[bulk-sell] ERROR: %s", reason)
 
     -- Only show user feedback in user mode
@@ -312,6 +318,12 @@ function f2t_bulk_sell_error(reason)
     end
 
     if F2T_BULK_STATE.commodity_queue then
+        if code == "timeout" then
+            -- An unanswered command is uncertain, not permission to send the
+            -- next commodity's order from the queue.
+            f2t_bulk_sell_finish_all()
+            return
+        end
         -- In queue mode, move to next commodity
         f2t_debug_log("[bulk-sell] Queue mode: moving to next commodity")
         F2T_BULK_STATE.queue_index = F2T_BULK_STATE.queue_index + 1
@@ -335,6 +347,7 @@ function f2t_bulk_sell_finish()
     local tons = sold * 75
     local commodity = F2T_BULK_STATE.commodity
     local callback = F2T_BULK_STATE.callback
+    local reason, code = F2T_BULK_STATE.error_reason, F2T_BULK_STATE.error_code
 
     f2t_debug_log("[bulk-sell] Finishing: sold %d lots of %s (%d tons)", sold, commodity, tons)
 
@@ -351,6 +364,8 @@ function f2t_bulk_sell_finish()
     F2T_BULK_STATE.callback = nil
     F2T_BULK_STATE.batched = false
     F2T_BULK_STATE.sent_command = nil
+    F2T_BULK_STATE.error_reason = nil
+    F2T_BULK_STATE.error_code = nil
     F2T_BULK_STATE.sell_all_cargo = false
     F2T_BULK_STATE.total_cost = 0
     F2T_BULK_STATE.total_revenue = 0
@@ -400,7 +415,8 @@ function f2t_bulk_sell_finish()
     -- Programmatic mode: call callback with data
     else
         local status = sold > 0 and "success" or "failed"
-        callback(commodity, sold, status, nil)
+        if code == "timeout" then status = "error" end
+        callback(commodity, sold, status, reason, code)
     end
 end
 
@@ -415,6 +431,7 @@ function f2t_bulk_sell_finish_all()
     local total_sold = F2T_BULK_STATE.total_sold
     local total_tons = total_sold * 75
     local callback = F2T_BULK_STATE.callback
+    local reason, code = F2T_BULK_STATE.error_reason, F2T_BULK_STATE.error_code
 
     -- Check if there's still cargo remaining
     local cargo = gmcp.char.ship.cargo or {}
@@ -436,6 +453,8 @@ function f2t_bulk_sell_finish_all()
     F2T_BULK_STATE.callback = nil
     F2T_BULK_STATE.batched = false
     F2T_BULK_STATE.sent_command = nil
+    F2T_BULK_STATE.error_reason = nil
+    F2T_BULK_STATE.error_code = nil
     F2T_BULK_STATE.sell_all_cargo = false
     F2T_BULK_STATE.aggregate_cost = 0
     F2T_BULK_STATE.aggregate_revenue = 0
@@ -490,6 +509,7 @@ function f2t_bulk_sell_finish_all()
     -- Programmatic mode: call callback with data
     else
         local status = total_sold > 0 and "success" or "failed"
-        callback(nil, total_sold, status, nil)
+        if code == "timeout" then status = "error" end
+        callback(nil, total_sold, status, reason, code)
     end
 end

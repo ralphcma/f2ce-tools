@@ -99,6 +99,15 @@
     ]
   },
   {
+    "name": "sell_error_restricted",
+    "patterns": [
+      {
+        "pattern": "^This exchange is currently restricted from non-deficit commodity sales\\b",
+        "type": "regex"
+      }
+    ]
+  },
+  {
     "name": "sell_success",
     "patterns": [
       {

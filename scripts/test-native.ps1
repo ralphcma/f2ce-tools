@@ -17,6 +17,16 @@ try {
     $jsonFiles = @(Get-ChildItem -LiteralPath @('src', 'tests', 'examples') -Recurse -File -Filter '*.json') + @(Get-Item mfile)
     foreach ($file in $jsonFiles) { Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json | Out-Null }
     Write-Output "METADATA=$($jsonFiles.Count) passed"
+    $tradeTriggers = Get-Content src/triggers/commodities/triggers.json -Raw | ConvertFrom-Json
+    $restrictionPattern = ($tradeTriggers | Where-Object name -eq 'sell_error_restricted').patterns[0].pattern
+    foreach ($line in @(
+        'This exchange is currently restricted from non-deficit commodity sales by order of the Galactic Administration.',
+        'This exchange is currently restricted from non-deficit commodity sales by order of the Galactic',
+        'This exchange is currently restricted from non-deficit commodity sales'
+    )) {
+        if ($line -notmatch $restrictionPattern) { throw 'Restriction trigger missed a full/wrapped response' }
+    }
+    if ('This exchange is open.' -match $restrictionPattern) { throw 'Restriction trigger is too broad' }
 
     function Invoke-Suites([string]$SourceRoot) {
         $commands = @(
@@ -25,6 +35,7 @@ try {
             @('tests/api/native_adapter_run.lua', "$SourceRoot/src/scripts/api/v1.lua", "$SourceRoot/src/scripts/api/adapter.lua"),
             @('tests/exchange_walker/run.lua', $SourceRoot),
             @('tests/commodities/bulk_counted_run.lua', $SourceRoot),
+            @('tests/hauling/refusal_run.lua', $SourceRoot),
             @('tests/stamina/cancel_run.lua', $SourceRoot),
             @('tests/map/startup_topology_sync_run.lua', "$SourceRoot/src/scripts/map/events.lua"),
             @('tests/map/topology_capture_safety_run.lua', "$SourceRoot/src/scripts/map/topology_capture.lua"),

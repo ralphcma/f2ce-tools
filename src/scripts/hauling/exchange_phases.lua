@@ -1,5 +1,104 @@
 -- Buy/sell cycle phase implementations
 
+-- Refusals are commodity/side/location scoped, not permanent map blacklists.
+-- Retain them across repeat loads of this commodity so stale premium quotes
+-- cannot send us back to a supplier/buyer which has already refused it.
+local function market_state()
+    local state = F2T_HAULING_STATE
+    if not state.exchange_market or state.exchange_market.commodity ~= state.current_commodity then
+        state.exchange_market = {commodity=state.current_commodity, buy={}, sell={}, rejected={buy={}, sell={}}}
+    end
+    return state.exchange_market
+end
+
+local function location_key(location)
+    if type(location) ~= "table" or type(location.planet) ~= "string" or location.planet == "" then return nil end
+    return (tostring(location.system or "") .. "\t" .. location.planet):lower()
+end
+
+local function reject_location(side, location)
+    local key = location_key(location)
+    if key then market_state().rejected[side][key] = true end
+end
+
+local function available_locations(side, rows)
+    local result, seen = {}, {}
+    for _, row in ipairs(rows or {}) do
+        local key = location_key(row)
+        local price = key and tonumber(row.price)
+        if key and price and price > 0 and price < math.huge and not seen[key]
+            and not market_state().rejected[side][key] then
+            seen[key] = true
+            result[#result + 1] = {planet=row.planet, system=row.system, price=price}
+        end
+    end
+    return result
+end
+
+local function remember_market(analysis)
+    if type(analysis) ~= "table" or type(analysis.top_buy) ~= "table"
+        or type(analysis.top_sell) ~= "table" then return nil end
+    local market = market_state()
+    market.buy = available_locations("buy", analysis.top_sell)
+    market.sell = available_locations("sell", analysis.top_buy)
+    return {top_sell=market.buy, top_buy=market.sell, profit=analysis.profit}
+end
+
+-- Use the already reviewed alternatives first. Only an exhausted list needs a
+-- fresh price request. Identity/token guards also reject late stopped-run replies.
+function f2t_hauling_retry_exchange(side)
+    local state, market = F2T_HAULING_STATE, market_state()
+    if not state.active or state.paused then return end
+    if side == "buy" and state.stopping then f2t_hauling_do_stop(); return end
+    reject_location(side, state[side .. "_location"])
+    state.current_phase = "finding_" .. side
+    local token = {}
+    market.pending = token
+    local function current()
+        return state == F2T_HAULING_STATE and state.active and not state.paused
+            and state.exchange_market == market and market.pending == token
+            and state.current_phase == "finding_" .. side
+    end
+    local function choose()
+        local candidates = available_locations(side, market[side])
+        for _, candidate in ipairs(candidates) do
+            local cost = side == "buy" and candidate.price or tonumber(state.actual_cost)
+            local buyer = available_locations("sell", market.sell)[1]
+            local bid = side == "sell" and candidate.price or (buyer and buyer.price)
+            if cost and cost > 0 and bid and bid > cost
+                and (bid - cost) / cost * 100 >= state.margin_threshold_pct then
+                market.pending = nil
+                state[side .. "_location"] = candidate
+                if side == "buy" then state.sell_location = buyer end
+                cecho(string.format("\n<yellow>[hauling]<reset> Trying next %s: <cyan>%s exchange<reset>\n",
+                    side == "buy" and "supplier" or "buyer", candidate.planet))
+                f2t_hauling_transition("navigating_to_" .. side)
+                return true
+            end
+        end
+        return false
+    end
+    if choose() then return end
+    f2t_price_check_commodity(state.current_commodity, function(_commodity, _data, analysis)
+        if not current() then return end
+        if side == "buy" and state.stopping then f2t_hauling_do_stop(); return end
+        if not remember_market(analysis) then
+            cecho("\n<red>[hauling]<reset> Could not refresh alternative exchanges; stopping with cargo preserved.\n")
+            f2t_hauling_do_stop()
+            return
+        end
+        if choose() then return end
+        market.pending = nil
+        if side == "buy" and #(gmcp.char.ship.cargo or {}) == 0 then
+            cecho("\n<yellow>[hauling]<reset> No eligible supplier remains; moving to next commodity.\n")
+            f2t_hauling_remove_current_commodity()
+        else
+            cecho("\n<yellow>[hauling]<reset> No eligible buyer remains; stopping with unsold cargo preserved.\n")
+            f2t_hauling_do_stop()
+        end
+    end)
+end
+
 -- Returns a set of lowercase, trimmed commodity names.
 local function parse_excluded_commodities()
     local setting = f2t_settings_get("hauling", "excluded_commodities")
@@ -248,6 +347,7 @@ function f2t_hauling_next_commodity()
     F2T_HAULING_STATE.commodity_cycles = 0
     F2T_HAULING_STATE.commodity_total_profit = 0
     F2T_HAULING_STATE.sell_attempts = 0
+    F2T_HAULING_STATE.exchange_market = nil
 
     f2t_debug_log("[hauling] Starting commodity %d/%d: %s (expected profit: %d ig/ton)",
         F2T_HAULING_STATE.queue_index, #F2T_HAULING_STATE.commodity_queue,
@@ -263,13 +363,15 @@ end
 -- Get detailed price data for selected commodity
 function f2t_hauling_get_commodity_details(commodity)
     f2t_debug_log("[hauling] Getting details for: %s", commodity)
+    local market = market_state()
 
     f2t_price_check_commodity(commodity, function(commodity_name, _parsed_data, analysis)
         f2t_debug_log("[hauling] Received commodity details callback for: %s", commodity_name)
         f2t_debug_log("[hauling] State - active: %s, paused: %s",
             tostring(F2T_HAULING_STATE.active), tostring(F2T_HAULING_STATE.paused))
 
-        if not F2T_HAULING_STATE.active or F2T_HAULING_STATE.paused then
+        if not F2T_HAULING_STATE.active or F2T_HAULING_STATE.paused
+            or F2T_HAULING_STATE.exchange_market ~= market then
             f2t_debug_log("[hauling] Callback aborted - hauling not active or paused")
             return
         end
@@ -281,6 +383,19 @@ function f2t_hauling_get_commodity_details(commodity)
             return
         end
 
+        analysis = remember_market(analysis)
+        if not analysis then
+            cecho("\n<red>[hauling]<reset> Commodity prices unavailable; stopping.\n")
+            f2t_hauling_do_stop()
+            return
+        end
+        -- Do not reuse a previous commodity's location if one side is empty.
+        F2T_HAULING_STATE.buy_location = nil
+        F2T_HAULING_STATE.sell_location = nil
+        if #analysis.top_buy == 0 or #analysis.top_sell == 0 then
+            f2t_hauling_remove_current_commodity()
+            return
+        end
         f2t_debug_log("[hauling] Analysis - top_buy count: %d, top_sell count: %d, profit: %d",
             #analysis.top_buy, #analysis.top_sell, analysis.profit or 0)
 
@@ -433,6 +548,11 @@ function f2t_hauling_phase_dump_cargo()
             return
         end
 
+        if status == "error" then
+            cecho("\n<red>[hauling]<reset> Cargo sale could not be confirmed; stopping with cargo preserved.\n")
+            f2t_hauling_do_stop()
+            return
+        end
         local cargo = gmcp.char.ship.cargo
         if cargo and #cargo > 0 then
             f2t_debug_log("[hauling] %d lots remain after dump, finding next exchange", #cargo)
@@ -611,8 +731,13 @@ function f2t_hauling_phase_buy()
             #existing_cargo))
         f2t_debug_log("[hauling] Cargo hold has %d lots, selling before buying (attempt %d)",
             #existing_cargo, F2T_HAULING_STATE.cargo_clear_attempts)
-        f2t_bulk_sell_start(nil, nil, function(_commodity_sold, _lots_sold, _status, _error_msg)
+        f2t_bulk_sell_start(nil, nil, function(_commodity_sold, _lots_sold, status, _error_msg, code)
             if not F2T_HAULING_STATE.active or F2T_HAULING_STATE.paused then
+                return
+            end
+            if status == "error" or code == "not_buying" or code == "sale_restricted" then
+                cecho("\n<yellow>[hauling]<reset> Could not clear existing cargo; stopping with cargo preserved.\n")
+                f2t_hauling_do_stop()
                 return
             end
             local still_has_cargo = gmcp.char and gmcp.char.ship and gmcp.char.ship.cargo
@@ -640,7 +765,7 @@ function f2t_hauling_phase_buy()
 
     f2t_debug_log("[hauling] Buying commodity: %s", F2T_HAULING_STATE.current_commodity)
 
-    f2t_bulk_buy_start(F2T_HAULING_STATE.current_commodity, nil, function(commodity, lots_bought, status, error_msg)
+    f2t_bulk_buy_start(F2T_HAULING_STATE.current_commodity, nil, function(commodity, lots_bought, status, error_msg, code)
         f2t_debug_log("[hauling] Buy complete: commodity=%s, lots=%d, status=%s", commodity, lots_bought, status)
 
         if not F2T_HAULING_STATE.active or F2T_HAULING_STATE.paused then
@@ -649,11 +774,20 @@ function f2t_hauling_phase_buy()
 
         if status == "error" then
             cecho(string.format("\n<red>[hauling]<reset> Buy failed: %s\n", error_msg or "unknown error"))
-            f2t_hauling_stop()
+            f2t_hauling_do_stop()
             return
         end
 
         local cargo = gmcp.char.ship.cargo
+        if code == "not_selling" then
+            reject_location("buy", F2T_HAULING_STATE.buy_location)
+            if lots_bought == 0 and cargo and #cargo == 0 then
+                f2t_hauling_retry_exchange("buy")
+                return
+            end
+            -- A partially filled counted buy is still cargo to deliver, not
+            -- permission to buy another hold from a different supplier.
+        end
         if not cargo or #cargo == 0 then
             cecho("\n<red>[hauling]<reset> Buy failed - no cargo loaded\n")
             f2t_hauling_stop()
@@ -736,7 +870,7 @@ function f2t_hauling_phase_sell()
 
     f2t_debug_log("[hauling] Selling commodity: %s", F2T_HAULING_STATE.current_commodity)
 
-    f2t_bulk_sell_start(F2T_HAULING_STATE.current_commodity, nil, function(commodity, lots_sold, status, error_msg)
+    f2t_bulk_sell_start(F2T_HAULING_STATE.current_commodity, nil, function(commodity, lots_sold, status, error_msg, code)
         f2t_debug_log("[hauling] Sell complete: commodity=%s, lots=%d, status=%s", commodity, lots_sold, status)
 
         if not F2T_HAULING_STATE.active or F2T_HAULING_STATE.paused then
@@ -745,7 +879,7 @@ function f2t_hauling_phase_sell()
 
         if status == "error" then
             cecho(string.format("\n<red>[hauling]<reset> Sell failed: %s\n", error_msg or "unknown error"))
-            f2t_hauling_stop()
+            f2t_hauling_do_stop()
             return
         end
 
@@ -756,6 +890,14 @@ function f2t_hauling_phase_sell()
             F2T_HAULING_STATE.current_commodity_stats.lots_sold + lots_sold
         F2T_HAULING_STATE.current_commodity_stats.total_revenue =
             F2T_HAULING_STATE.current_commodity_stats.total_revenue + total_revenue
+
+        if code == "not_buying" or code == "sale_restricted" then
+            reject_location("sell", F2T_HAULING_STATE.sell_location)
+            if #(gmcp.char.ship.cargo or {}) > 0 then
+                f2t_hauling_find_next_sell_location()
+                return
+            end
+        end
 
         f2t_debug_log("[hauling] Tracking sell: %d lots at %d ig/ton = %d ig total revenue",
             lots_sold, exchange_buy_price, total_revenue)
@@ -948,46 +1090,7 @@ function f2t_hauling_find_next_sell_location()
 
     F2T_HAULING_STATE.sell_attempts = F2T_HAULING_STATE.sell_attempts + 1
 
-    f2t_price_check_commodity(F2T_HAULING_STATE.current_commodity, function(_commodity_name, _parsed_data, analysis)
-        if not F2T_HAULING_STATE.active or F2T_HAULING_STATE.paused then
-            return
-        end
-
-        -- top_buy = "exchanges buying" (where WE sell).
-        if #analysis.top_buy >= F2T_HAULING_STATE.sell_attempts then
-            local next_sell = analysis.top_buy[F2T_HAULING_STATE.sell_attempts]
-
-            local profit_per_ton = next_sell.price - F2T_HAULING_STATE.actual_cost
-            local profit_margin_pct = (profit_per_ton / F2T_HAULING_STATE.actual_cost) * 100
-
-            f2t_debug_log("[hauling] Next sell location: %s: %s at %d ig/ton (margin: %.1f%%)",
-                next_sell.system, next_sell.planet, next_sell.price, profit_margin_pct)
-
-            if profit_margin_pct < F2T_HAULING_STATE.margin_threshold_pct then
-                cecho(string.format(
-                    "\n<yellow>[hauling]<reset> Best remaining location has insufficient margin (%.1f%% < %.0f%%)\n",
-                    profit_margin_pct, F2T_HAULING_STATE.margin_threshold_pct))
-                cecho("\n<yellow>[hauling]<reset> Abandoning commodity and dumping remaining cargo\n")
-
-                f2t_hauling_complete_commodity_cycle()
-                f2t_hauling_remove_current_commodity()
-                return
-            end
-
-            F2T_HAULING_STATE.sell_location = {
-                system = next_sell.system,
-                planet = next_sell.planet,
-                price = next_sell.price
-            }
-
-            f2t_hauling_transition("navigating_to_sell")
-        else
-            cecho("\n<red>[hauling]<reset> No more sell locations available\n")
-
-            f2t_hauling_complete_commodity_cycle()
-            f2t_hauling_remove_current_commodity()
-        end
-    end)
+    f2t_hauling_retry_exchange("sell")
 end
 
 function f2t_hauling_check_nav_to_dump_complete()
