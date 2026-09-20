@@ -58,11 +58,25 @@ local function onlineCount()
     return n
 end
 
+-- Rendering a table cell crosses from Lua into Geyser (and, on the web client,
+-- into JavaScript/React). A single-player GMCP delta still walks the sorted
+-- table, but unchanged cells should not repeat their HTML, tooltip, and callback
+-- writes. The row reference is stable in player_db.lua, so callbacks continue to
+-- see current data without being replaced when another field changes.
+local function renderCellIfChanged(cell, row, signature, render)
+    if cell._f2tWhoRow == row and cell._f2tWhoSignature == signature then return end
+    render()
+    cell._f2tWhoRow = row
+    cell._f2tWhoSignature = signature
+end
+
 local function refreshInstance(gid)
     local inst = instances[gid]
     if not inst then return end
-    if inst.hdrCount then
-        inst.hdrCount:echo(string.format("  👥  Online: %d", onlineCount()))
+    local count = onlineCount()
+    if inst.hdrCount and inst.onlineCount ~= count then
+        inst.hdrCount:echo(string.format("  👥  Online: %d", count))
+        inst.onlineCount = count
     end
     f2tTableSetData(inst.tableId, buildTableData(inst.showAll))
 end
@@ -85,14 +99,17 @@ local function buildCols()
             scrollbox_pct = 30,
             render_label  = function(v, row, cell)
                 local rc = rankColor(row)
-                cell:echo(string.format(
-                    "<span style='%scolor:%s;'>%s</span>",
-                    CELL_FONT, rc, v or ""))
-                if row.is_online == false and row.last_seen then
-                    cell:setToolTip("Last seen " .. f2t_player_db_last_seen_str(row.last_seen))
-                end
-                cell:setClickCallback(function()
-                    if f2tPlayerCardShowOrRaise then f2tPlayerCardShowOrRaise(row) end
+                local tooltip = (row.is_online == false and row.last_seen)
+                    and ("Last seen " .. f2t_player_db_last_seen_str(row.last_seen)) or ""
+                local signature = table.concat({ tostring(v or ""), rc, tooltip }, "\31")
+                renderCellIfChanged(cell, row, signature, function()
+                    cell:echo(string.format(
+                        "<span style='%scolor:%s;'>%s</span>",
+                        CELL_FONT, rc, v or ""))
+                    cell:setToolTip(tooltip)
+                    cell:setClickCallback(function()
+                        if f2tPlayerCardShowOrRaise then f2tPlayerCardShowOrRaise(row) end
+                    end)
                 end)
             end,
         },
@@ -108,12 +125,15 @@ local function buildCols()
                     and string.format("<span style='%scolor:#ffff55;'> [%s]</span>",
                         CELL_FONT, row.staff:sub(1, 3))
                     or ""
-                cell:echo(string.format(
-                    "<span style='%scolor:%s;'><b>%s</b></span>%s",
-                    CELL_FONT, rc, v or "", staffSfx))
-                cell:setToolTip("Click to view player card")
-                cell:setClickCallback(function()
-                    if f2tPlayerCardShowOrRaise then f2tPlayerCardShowOrRaise(row) end
+                local signature = table.concat({ tostring(v or ""), rc, staffSfx }, "\31")
+                renderCellIfChanged(cell, row, signature, function()
+                    cell:echo(string.format(
+                        "<span style='%scolor:%s;'><b>%s</b></span>%s",
+                        CELL_FONT, rc, v or "", staffSfx))
+                    cell:setToolTip("Click to view player card")
+                    cell:setClickCallback(function()
+                        if f2tPlayerCardShowOrRaise then f2tPlayerCardShowOrRaise(row) end
+                    end)
                 end)
             end,
         },
@@ -123,23 +143,34 @@ local function buildCols()
             sortable      = true,
             scrollbox_pct = 32,
             render_label  = function(v, row, cell)
-                if not v or v == "" then return end
+                v = v or ""
                 local lcc    = (row.is_online == false) and RC_OFFLINE or "#00cccc"
-                cell:echo(string.format(
-                    "<span style='%scolor:%s;'>%s</span>",
-                    CELL_FONT, lcc, v))
-                local locSys = v:match("^(.+) Space$")
-                cell:setClickCallback(function()
-                    if locSys then expandAlias("nav " .. locSys .. " link")
-                    else            expandAlias("nav " .. v) end
-                end)
+                local locSys = v ~= "" and v:match("^(.+) Space$") or nil
                 local dest = locSys or v
+                local tooltip = ""
                 if row.is_online == false and row.last_seen then
-                    cell:setToolTip(f2t_player_db_last_seen_str(row.last_seen) ..
-                        " — navigate to " .. dest)
-                else
-                    cell:setToolTip("Navigate to " .. dest)
+                    tooltip = f2t_player_db_last_seen_str(row.last_seen) ..
+                        " — navigate to " .. dest
+                elseif v ~= "" then
+                    tooltip = "Navigate to " .. dest
                 end
+                local signature = table.concat({ v, lcc, tooltip }, "\31")
+                renderCellIfChanged(cell, row, signature, function()
+                    if v == "" then
+                        cell:echo("")
+                        cell:setToolTip("")
+                        cell:setClickCallback(function() end)
+                        return
+                    end
+                    cell:echo(string.format(
+                        "<span style='%scolor:%s;'>%s</span>",
+                        CELL_FONT, lcc, v))
+                    cell:setToolTip(tooltip)
+                    cell:setClickCallback(function()
+                        if locSys then expandAlias("nav " .. locSys .. " link")
+                        else            expandAlias("nav " .. v) end
+                    end)
+                end)
             end,
         },
     }

@@ -1,0 +1,136 @@
+local repo = arg[1] or "."
+
+local captured_def = nil
+local captured_columns = nil
+
+local function assert_equal(actual, expected, label)
+    if actual ~= expected then
+        error(string.format("%s: expected %s, got %s", label, tostring(expected), tostring(actual)))
+    end
+end
+
+local Widget = {}
+Widget.__index = Widget
+
+function Widget:new()
+    return setmetatable({
+        echo_count = 0,
+        tooltip_count = 0,
+        callback_count = 0,
+        width = 500,
+        height = 300,
+    }, self)
+end
+
+function Widget:echo() self.echo_count = self.echo_count + 1 end
+function Widget:setToolTip() self.tooltip_count = self.tooltip_count + 1 end
+function Widget:setClickCallback() self.callback_count = self.callback_count + 1 end
+function Widget:setStyleSheet(style) self.style = style end
+function Widget:hide() self.hidden = true end
+function Widget:show() self.hidden = false end
+function Widget:resize(width, height)
+    self.width = width or self.width
+    self.height = height or self.height
+end
+function Widget:move(x, y)
+    self.x = x
+    self.y = y
+end
+function Widget:get_width() return self.width end
+function Widget:get_height() return self.height end
+
+local Label = setmetatable({}, { __index = Widget })
+Label.__index = Label
+function Label:new() return setmetatable(Widget:new(), self) end
+
+local ScrollBox = setmetatable({}, { __index = Widget })
+ScrollBox.__index = ScrollBox
+function ScrollBox:new() return setmetatable(Widget:new(), self) end
+
+Geyser = { Label = Label, ScrollBox = ScrollBox }
+Mux = {
+    registerContent = function(_, def) captured_def = def end,
+}
+F2T_CONTENT_REGISTRARS = {}
+F2T_PLAYER_DB = {}
+
+function f2t_ui_pt(size) return size end
+function f2t_rank_color_hex() return "#abcdef" end
+function f2t_player_db_get_offline() return {} end
+function f2t_player_db_last_seen_str() return "1m ago" end
+function f2t_debug_log() end
+function registerAnonymousEventHandler() return 1 end
+function tempTimer() return 1 end
+function expandAlias() end
+function f2tTableCreate(_, columns) captured_columns = columns end
+function f2tTableSetScrollbox() end
+function f2tTableSetColHdrs() end
+function f2tTableSetData() end
+function f2tTableToggleSort() end
+function f2tTableDestroy() end
+function f2tTableOnResize() end
+
+dofile(repo .. "/src/scripts/ui/content/who.lua")
+F2T_CONTENT_REGISTRARS[1]()
+
+local target = {
+    _gid = "test",
+    content = Widget:new(),
+    contentBg = Widget:new(),
+}
+captured_def.apply(target)
+
+local rank_cell = Widget:new()
+local name_cell = Widget:new()
+local location_cell = Widget:new()
+local row = {
+    name = "Alice",
+    rank = "Trader",
+    rank_order = 5,
+    location = "Sol Space",
+    staff = "",
+    is_online = true,
+}
+
+captured_columns[1].render_label(row.rank, row, rank_cell)
+captured_columns[2].render_label(row.name, row, name_cell)
+captured_columns[3].render_label(row.location, row, location_cell)
+assert_equal(rank_cell.echo_count, 1, "first rank render")
+assert_equal(name_cell.echo_count, 1, "first name render")
+assert_equal(location_cell.echo_count, 1, "first location render")
+
+captured_columns[1].render_label(row.rank, row, rank_cell)
+captured_columns[2].render_label(row.name, row, name_cell)
+captured_columns[3].render_label(row.location, row, location_cell)
+assert_equal(rank_cell.echo_count, 1, "unchanged rank is not rewritten")
+assert_equal(name_cell.echo_count, 1, "unchanged name is not rewritten")
+assert_equal(location_cell.echo_count, 1, "unchanged location is not rewritten")
+assert_equal(location_cell.callback_count, 1, "unchanged callback is not replaced")
+
+row.location = "Earth"
+captured_columns[1].render_label(row.rank, row, rank_cell)
+captured_columns[2].render_label(row.name, row, name_cell)
+captured_columns[3].render_label(row.location, row, location_cell)
+assert_equal(rank_cell.echo_count, 1, "location change leaves rank alone")
+assert_equal(name_cell.echo_count, 1, "location change leaves name alone")
+assert_equal(location_cell.echo_count, 2, "location change rewrites location")
+
+row.location = ""
+captured_columns[3].render_label(row.location, row, location_cell)
+captured_columns[3].render_label(row.location, row, location_cell)
+assert_equal(location_cell.echo_count, 3, "blank location clears exactly once")
+assert_equal(location_cell.callback_count, 3, "blank location clears callback exactly once")
+
+local replacement = {
+    name = "Bob",
+    rank = "Trader",
+    rank_order = 5,
+    location = "Earth",
+    staff = "",
+    is_online = true,
+}
+captured_columns[2].render_label(replacement.name, replacement, name_cell)
+assert_equal(name_cell.echo_count, 2, "row replacement rewrites cell")
+assert_equal(name_cell.callback_count, 2, "row replacement refreshes callback")
+
+print("who render cache: ok")
