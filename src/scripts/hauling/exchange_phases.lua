@@ -23,11 +23,12 @@ end
 
 local function available_locations(side, rows)
     local result, seen = {}, {}
+    local rejected = market_state().rejected[side]
     for _, row in ipairs(rows or {}) do
         local key = location_key(row)
         local price = key and tonumber(row.price)
         if key and price and price > 0 and price < math.huge and not seen[key]
-            and not market_state().rejected[side][key] then
+            and not rejected[key] then
             seen[key] = true
             result[#result + 1] = {planet=row.planet, system=row.system, price=price}
         end
@@ -35,12 +36,22 @@ local function available_locations(side, rows)
     return result
 end
 
-local function remember_market(analysis)
+local function remember_market(analysis, parsed)
     if type(analysis) ~= "table" or type(analysis.top_buy) ~= "table"
         or type(analysis.top_sell) ~= "table" then return nil end
+    -- top_* is the UI's limited shortlist (20 rows for the premium provider),
+    -- not the available market. Both native and premium callbacks also carry
+    -- their complete, already policy-filtered parsed response. Retain that for
+    -- routing without widening the displayed tables or issuing extra polls.
+    local buyers, suppliers = analysis.top_buy, analysis.top_sell
+    if type(parsed) == "table" and (parsed.buy ~= nil or parsed.sell ~= nil) then
+        if type(parsed.buy) ~= "table" or type(parsed.sell) ~= "table" then return nil end
+        buyers, suppliers = parsed.buy, parsed.sell
+    end
     local market = market_state()
-    market.buy = available_locations("buy", analysis.top_sell)
-    market.sell = available_locations("sell", analysis.top_buy)
+    market.buy = available_locations("buy", suppliers)
+    market.sell = available_locations("sell", buyers)
+    market.quoted = {buy=#suppliers, sell=#buyers}
     return {top_sell=market.buy, top_buy=market.sell, profit=analysis.profit}
 end
 
@@ -61,15 +72,21 @@ function f2t_hauling_retry_exchange(side)
     end
     local function choose()
         local candidates = available_locations(side, market[side])
+        local buyer = side == "buy" and available_locations("sell", market.sell)[1]
+        local cargo_floor = side == "sell" and f2t_hauling_cargo_floor()
         for _, candidate in ipairs(candidates) do
-            local cost = side == "buy" and candidate.price or tonumber(state.actual_cost)
-            local buyer = available_locations("sell", market.sell)[1]
+            local cost = side == "buy" and candidate.price or cargo_floor
             local bid = side == "sell" and candidate.price or (buyer and buyer.price)
-            if cost and cost > 0 and bid and bid > cost
-                and (bid - cost) / cost * 100 >= state.margin_threshold_pct then
+            local required = cost and (side == "sell" and cost or cost * (1 + state.margin_threshold_pct / 100))
+            if required and bid and bid > 0 and bid >= required and (side == "sell" or bid > cost) then
                 market.pending = nil
                 state[side .. "_location"] = candidate
                 if side == "buy" then state.sell_location = buyer end
+                if side == "sell" then
+                    state.sell_recovery = true
+                    state.recovery_after_sequence = nil
+                    state.recovery_expected_lots = nil
+                end
                 cecho(string.format("\n<yellow>[hauling]<reset> Trying next %s: <cyan>%s exchange<reset>\n",
                     side == "buy" and "supplier" or "buyer", candidate.planet))
                 f2t_hauling_transition("navigating_to_" .. side)
@@ -79,10 +96,10 @@ function f2t_hauling_retry_exchange(side)
         return false
     end
     if choose() then return end
-    f2t_price_check_commodity(state.current_commodity, function(_commodity, _data, analysis)
+    f2t_price_check_commodity(state.current_commodity, function(_commodity, parsed, analysis)
         if not current() then return end
         if side == "buy" and state.stopping then f2t_hauling_do_stop(); return end
-        if not remember_market(analysis) then
+        if not remember_market(analysis, parsed) then
             cecho("\n<red>[hauling]<reset> Could not refresh alternative exchanges; stopping with cargo preserved.\n")
             f2t_hauling_do_stop()
             return
@@ -93,7 +110,14 @@ function f2t_hauling_retry_exchange(side)
             cecho("\n<yellow>[hauling]<reset> No eligible supplier remains; moving to next commodity.\n")
             f2t_hauling_remove_current_commodity()
         else
-            cecho("\n<yellow>[hauling]<reset> No eligible buyer remains; stopping with unsold cargo preserved.\n")
+            local remaining = available_locations("sell", market.sell)
+            local best = remaining[1] and remaining[1].price
+            cecho(string.format(
+                "\n<yellow>[hauling]<reset> Buyer search for %s: %d quoted, %d untried after refusals; " ..
+                "best remaining bid %s, purchase-cost floor %sig/ton. " ..
+                "Stopping with unsold cargo preserved.\n", state.current_commodity,
+                market.quoted.sell, #remaining, best and (tostring(best) .. "ig/ton") or "none",
+                tostring(f2t_hauling_cargo_floor() or "unknown")))
             f2t_hauling_do_stop()
         end
     end)
@@ -365,7 +389,7 @@ function f2t_hauling_get_commodity_details(commodity)
     f2t_debug_log("[hauling] Getting details for: %s", commodity)
     local market = market_state()
 
-    f2t_price_check_commodity(commodity, function(commodity_name, _parsed_data, analysis)
+    f2t_price_check_commodity(commodity, function(commodity_name, parsed, analysis)
         f2t_debug_log("[hauling] Received commodity details callback for: %s", commodity_name)
         f2t_debug_log("[hauling] State - active: %s, paused: %s",
             tostring(F2T_HAULING_STATE.active), tostring(F2T_HAULING_STATE.paused))
@@ -383,7 +407,7 @@ function f2t_hauling_get_commodity_details(commodity)
             return
         end
 
-        analysis = remember_market(analysis)
+        analysis = remember_market(analysis, parsed)
         if not analysis then
             cecho("\n<red>[hauling]<reset> Commodity prices unavailable; stopping.\n")
             f2t_hauling_do_stop()
@@ -859,6 +883,10 @@ end
 
 -- Phase 5: sell commodity
 function f2t_hauling_phase_sell()
+    if F2T_HAULING_STATE.sell_recovery then
+        f2t_hauling_phase_recovery_sell()
+        return
+    end
     if not F2T_HAULING_STATE.current_commodity then
         cecho("\n<red>[hauling]<reset> No commodity selected\n")
         f2t_hauling_stop()
@@ -1131,7 +1159,9 @@ end
 
 --- @return string Event handler ID
 function f2t_exchange_register_handlers()
+    f2t_hauling_recovery_cleanup()
     local handler_id = registerAnonymousEventHandler("gmcp.room.info", function()
+        f2t_hauling_recovery_observe("room")
         -- Brief delay lets GMCP settle before checking navigation completion.
         tempTimer(0.5, function()
             f2t_hauling_check_nav_to_buy_complete()
@@ -1139,6 +1169,11 @@ function f2t_exchange_register_handlers()
             f2t_hauling_check_nav_to_dump_complete()
         end)
     end)
+    F2T_HAULING_STATE.recovery_handlers = {
+        registerAnonymousEventHandler("gmcp.exchange.commodities", function() f2t_hauling_recovery_observe("full") end),
+        registerAnonymousEventHandler("gmcp.exchange.commodity", function() f2t_hauling_recovery_observe("tick") end),
+        registerAnonymousEventHandler("gmcp.char.ship", function() f2t_hauling_recovery_observe("cargo") end),
+    }
 
     f2t_debug_log("[hauling/exchange] Registered Exchange event handlers")
     return handler_id
@@ -1146,6 +1181,9 @@ end
 
 --- @param handler_id string Event handler ID to kill
 function f2t_exchange_cleanup_handlers(handler_id)
+    f2t_hauling_recovery_cleanup()
+    for _, id in ipairs(F2T_HAULING_STATE.recovery_handlers or {}) do killAnonymousEventHandler(id) end
+    F2T_HAULING_STATE.recovery_handlers = nil
     if handler_id then
         killAnonymousEventHandler(handler_id)
         f2t_debug_log("[hauling/exchange] Cleaned up Exchange event handlers")

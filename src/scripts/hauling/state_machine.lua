@@ -828,6 +828,8 @@ function f2t_hauling_transition(new_phase)
         f2t_hauling_phase_navigate_to_sell()
     elseif new_phase == "selling" then
         f2t_hauling_phase_sell()
+    elseif new_phase == "waiting_sell_quote" then
+        f2t_hauling_phase_recovery_sell()
     elseif new_phase == "finding_buy" then
         f2t_hauling_retry_exchange("buy")
     elseif new_phase == "finding_sell" then

@@ -9,15 +9,22 @@
 > for native Walker or FedHauler 1.16.0. Walker adds a Founder+ tab beside
 > Who/Events/Exchange, with a sortable remote exchange table and bottom controls.
 
-Native candidate **ew34** fixes exchange/premium hauling refusal handling:
+Native candidate **ew35** fixes exchange/premium hauling refusal handling:
 Galactic Administration sale restrictions and not-buying/not-selling replies
 advance immediately to an eligible cached alternative, without waiting for the
 15-second bulk watchdog. Refused locations are excluded for that commodity and
 trade direction until the next commodity pass; they are not map blacklists.
-An exhausted cache gets one price refresh. No remaining supplier skips the
-commodity; no eligible buyer stops with cargo aboard. Configured margin checks,
-pause/stop controls and counted bulk commands remain in place. Uncertain timed-out
-exchange trades stop instead of authorizing another trade.
+Routing now uses the full, policy-filtered price response, not the UI's top-20
+shortlist. An exhausted cache gets one price refresh. No remaining supplier skips
+the commodity. New purchases retain their margin checks; already-owned recovery
+cargo may clear at break-even or better. Recovery checks the highest remaining
+bay cost against a fresh, current-room bid and sells one bay at a time, waiting
+for both its cargo reconciliation and a new quote before another sale. A cleared
+recovery load advances to the next commodity. Normal hauling keeps counted bulk
+commands. No break-even buyer leaves cargo aboard with an explanatory stop
+message. Uncertain timed-out trades stop without retries. The server does not
+offer an atomic minimum-price order: if a concurrent change beats the last local
+quote, the receipt is recorded and further recovery sales stop.
 
 A Mudlet package for [Federation 2 Community Edition](https://federation2.com) — mapping, navigation, automated trading, factory management, planet-owner tools, and quality-of-life automation, with an optional [Muxlet](https://github.com/tmtocloud/Muxlet)-based GUI.
 

@@ -1,5 +1,46 @@
 # Module API verification
 
+## 2026-09-20 Full-market buyers and break-even cargo recovery
+
+Candidate `f2ce-tools-3.3.0-native-ew35.mpackage`, SHA256
+`1c41c7e4cb7c81b71c30d3b6408bfaa38e722a03ea20fb069bb277bd459fc6b8`.
+
+All native suites pass on source and reconstructed package: 265 Lua syntax
+checks, 32 metadata checks, 230 packaged script/trigger bodies matching source,
+and 51 hauling refusal/recovery tests. The private consumer's 119 native
+integration tests also pass. No live profile installation or trading was done.
+
+The ew34 fallback incorrectly treated the display shortlist (20 rows for premium
+prices) as the entire market. Routing now uses the complete parsed response,
+which has already passed the provider's route-policy filter. Shortlist-only
+callbacks remain compatible, but an explicitly empty full response cannot revive
+stale shortlist entries. Price tables keep their existing display limits. The
+full-market search is linear rather than rescanning all buyers per candidate.
+
+As explicitly requested, recovery of already-held cargo may sell below the new
+purchase margin down to break-even. Its floor is the highest purchase cost of
+the remaining bays. Recovery sells one bay at a time using current-room GMCP
+bid receipts, waits for the cargo count to reconcile, then requires a newer
+matching commodity receipt before sending another bay. Handlers use full-market,
+individual-commodity and parent `gmcp.char.ship` events and are removed on
+cleanup. Normal profitable hauling retains counted bulk orders. Clearing the
+recovery load completes its statistics once and advances to the next commodity.
+New purchases retain their existing margin policy.
+
+Tests cover the twenty-first buyer, suppliers hidden by display limits, full
+market refreshes, partial/malformed responses, exact break-even and mixed bay
+costs, below-cost arrival and falling next-bay bids, unrelated ticker updates,
+room changes, missing quotes, delayed cargo updates, receipt revenue, forced and
+deferred pause/resume, cleanup/reload, and a server-side price race. A quote wait
+is bounded to three seconds before trying another buyer; an uncertain order or
+unreconciled cargo stops without replay. Exhaustion reports quoted/untried
+counts, the best remaining bid and the purchase-cost floor.
+
+Federation's sale command has no atomic minimum-price condition. The guard uses
+the latest local quote; another trade can still change the server price before
+execution. If the actual receipt falls below the floor, its revenue is recorded
+and remaining recovery cargo is stopped rather than continuing to sell.
+
 ## 2026-09-20 Prompt exchange-hauling refusal failover
 
 Candidate `f2ce-tools-3.3.0-native-ew34.mpackage`, SHA256

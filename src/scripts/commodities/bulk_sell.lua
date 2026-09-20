@@ -416,7 +416,7 @@ function f2t_bulk_sell_finish()
     else
         local status = sold > 0 and "success" or "failed"
         if code == "timeout" then status = "error" end
-        callback(commodity, sold, status, reason, code)
+        callback(commodity, sold, status, reason, code, {revenue=total_revenue})
     end
 end
 
