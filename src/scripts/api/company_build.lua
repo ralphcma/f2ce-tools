@@ -7,6 +7,7 @@ local COST=2000000
 local DEPOT_COST,DEPOT_WORKERS=1004480,7
 API.company.factorySiteVersion=1
 API.company.factoryPriceReviewVersion=1
+API.company.factoryAutomationVersion=1
 local limits={Industrialist=8,Manufacturer=15}
 local function norm(v) return type(v)=="string" and v:lower() or "" end
 local function integer(v,lo,hi) return type(v)=="number" and v==math.floor(v) and v>=lo and v<=hi end
@@ -34,12 +35,13 @@ local function snapshot(options)
     local where=location(options)
     if not limit or not where then return nil,failure("Industrialist/Manufacturer at the selected exchange required") end
     if not integer(company.cash,0,10000000000) then return nil,failure("company cash unavailable") end
-    local roster,slot,count,local_factory={},nil,0,false
+    local roster,slot,count,local_factory,local_count={},nil,0,false,0
     for _,f in pairs(company.factories) do
         if type(f)~="table" or not integer(f.number,1,limit) or roster[f.number]
             or not S.name(f.planet,true) or not S.name(f.output) then return nil,failure("invalid company factory roster") end
         roster[f.number]={number=f.number,planet=f.planet,output=f.output}
         count=count+1; local_factory=local_factory or norm(f.planet)==norm(options.planet)
+        if norm(f.planet)==norm(options.planet) then local_count=local_count+1 end
     end
     for i=1,limit do if not roster[i] then slot=i; break end end
     if count>=math.min(limit,options.factory_limit or limit) then slot=nil end
@@ -52,7 +54,7 @@ local function snapshot(options)
         end
     end
     return {owner=company.name,ceo=company.ceo,rank=vitals.rank,location=where,roster=roster,slot=slot,cash=company.cash,
-        depots=depots,depot_count=depot_count,local_factory=local_factory}
+        depots=depots,depot_count=depot_count,local_factory=local_factory,local_count=local_count}
 end
 local function validate_options(o)
     if type(o)~="table" or not S.name(o.planet,true) or not S.name(o.system,true) or norm(o.system)=="sol"
@@ -64,6 +66,10 @@ local function validate_options(o)
     if o.depot_only~=nil and type(o.depot_only)~="boolean" then return false end
     if o.review_prices~=nil and type(o.review_prices)~="boolean" then return false end
     if o.factory_limit~=nil and not integer(o.factory_limit,1,15) then return false end
+    if o.automation then
+        if o.automation~=true or o.wages~=40 or o.planet_limit~=2 or o.factory_limit~=8
+            or o.require_depot~=true or not integer(o.reserved_workers,0,10000000) then return false end
+    elseif o.wages~=nil or o.planet_limit~=nil or o.reserved_workers~=nil then return false end
     if o.depot_only and (not o.require_depot or o.labour~=0 or #o.inputs~=0 or o.commodity~="Depot") then return false end
     local seen={}
     for _,input in ipairs(o.inputs) do
@@ -78,10 +84,11 @@ local function ready(state,report,o,review_prices)
     local needs_depot=o.require_depot==true and not state.depots[norm(o.planet)]
     if o.depot_only then
         if not state.local_factory or not needs_depot then return nil,failure("depot-only build requires an owned factory and no depot on this planet") end
-    elseif not state.slot then return nil,failure("no free factory slot under the configured limit") end
+    elseif not state.slot then return nil,failure("no free factory slot under the configured limit")
+    elseif o.automation and state.local_count>=o.planet_limit then return nil,failure("two-factory planet limit reached") end
     if needs_depot and state.depot_count>=(state.rank=="Industrialist" and 16 or 15) then return nil,failure("no free depot slot") end
     local cost=(o.depot_only and 0 or COST)+(needs_depot and DEPOT_COST or 0)
-    local labour=o.labour+(needs_depot and DEPOT_WORKERS or 0)
+    local labour=o.labour+(needs_depot and DEPOT_WORKERS or 0)+(o.reserved_workers or 0)
     if state.cash-cost<o.company_reserve then return nil,failure("factory/depot construction cost would breach company reserve") end
     local stamina=API.data.get("stamina")
     local threshold=math.max(25,tonumber(API.settings.get("stamina","threshold")) or 0)
@@ -103,11 +110,13 @@ local function ready(state,report,o,review_prices)
     end
     local output=normalized[norm(o.commodity)]
     local review
+    local contribution=0
     if not o.depot_only then
         if type(output)~="table" or not integer(tonumber(output.buy),1,1000000) then
             return nil,failure("exchange is not buying the factory output")
         end
         local price=tonumber(output.buy)
+        contribution=75*price
         if review_prices then
             review={required=price<o.output_price_floor,
                 output={commodity=o.commodity,previous_price=o.output_price_floor,current_price=price},inputs={},
@@ -126,6 +135,7 @@ local function ready(state,report,o,review_prices)
             return nil,failure("local input stock/ask unavailable or below required stock: "..input.commodity)
         end
         local price=tonumber(row.sell)
+        contribution=contribution-input.required*price
         if review then
             review.required=review.required or price>input.price_limit
             review.inputs[#review.inputs+1]={commodity=input.commodity,previous_price=input.price_limit,current_price=price}
@@ -136,11 +146,14 @@ local function ready(state,report,o,review_prices)
             return nil,failure(string.format("%s input ask %dig above confirmed maximum %dig; refresh the build preview",input.commodity,price,input.price_limit))
         end
     end
+    if o.automation and not o.depot_only and contribution-o.labour*o.wages<=0 then
+        return nil,failure("factory no longer has positive material contribution after 40ig wages")
+    end
     return {owner=state.owner,ceo=state.ceo,rank=state.rank,planet=o.planet,system=o.system,commodity=o.commodity,
         slot=o.depot_only and 0 or state.slot,cost=cost,company_cash=state.cash,company_reserve=o.company_reserve,
         depot_needed=needs_depot,depot_only=o.depot_only==true,require_depot=o.require_depot==true,
         after_build=state.cash-cost,workers_available=workers.available,workers_required=labour,economy=workers.economy,
-        market_review=review}
+        market_review=review,wages=o.automation and not o.depot_only and o.wages or nil}
 end
 function API.company.prepareFactory(context,options,callback)
     local o=S.copy(options)
@@ -150,13 +163,14 @@ function API.company.prepareFactory(context,options,callback)
     if type(API.company._systemWithLease)~="function" then return nil,S.error("E_CAPABILITY","system workforce API required") end
     local lease; lease,why=API.commands.acquire(context,{service="company.factory.preview"}); if not lease then return nil,why end
     local active,sent,phase=true,false,"reading"
-    local token,timer,child,preview,completion
+    local token,timer,child,preview,completion,observer
     local subscriptions={}; local epoch=0
     local handle={}
     local function clear()
         epoch=epoch+1
         if timer then API._adapter.cancelTimer(timer); timer=nil end
         if child then child:cancel("build_read_finished"); child=nil end
+        if observer then API._adapter.unobserveLine(observer); observer=nil end
         for _,sub in ipairs(subscriptions) do sub:cancel() end; subscriptions={}
     end
     local function cleanup(reason)
@@ -222,6 +236,44 @@ function API.company.prepareFactory(context,options,callback)
             local payload=S.copy(o); payload.proposal=proposal
             local allowed,why=S.authorize(context,"company.factory.buy",payload)
             if not allowed then finish(nil,why); return end
+            local function set_wages()
+                if not o.automation then finish(proposal); return end
+                clear(); phase="setting_wages"
+                local allowed,why=S.authorize(context,"company.factory.wages",payload)
+                if not allowed then finish(nil,why); return end
+                if type(API._adapter.observeLine)~="function" or type(API._adapter.parseFactory)~="function" then
+                    finish(nil,failure("factory wage verification unavailable")); return
+                end
+                local rows,started={},false
+                observer=API._adapter.observeLine(function(line)
+                    if not active then return end
+                    local clean=line:gsub("\27%[[%d;]*m","")
+                    if clean:find("Production Facility #",1,true) then
+                        if started then finish(nil,failure("multiple factory wage headers")); return end
+                        started=true
+                    end
+                    if not started then return end
+                    rows[#rows+1]=clean
+                    if #rows>100 then finish(nil,failure("factory wage display too long")); return end
+                    if not table.concat(rows," "):gsub("%s+"," "):find("Next batch is %d+%% complete") then return end
+                    local record=API._adapter.parseFactory(rows,proposal.slot)
+                    local state=snapshot(o)
+                    local factory=state and state.roster[proposal.slot]
+                    if not identity(state) or not factory or norm(factory.planet)~=norm(o.planet)
+                        or norm(factory.output)~=norm(o.commodity) or not record or record.owner~=proposal.owner
+                        or norm(record.location)~=norm(o.planet) or norm(record.commodity)~=norm(o.commodity)
+                        or record.wages~=o.wages then finish(nil,failure("factory wage setting did not reconcile")); return end
+                    proposal.wages_confirmed=true; finish(proposal)
+                end)
+                if not observer then finish(nil,failure("factory wage observer unavailable")); return end
+                if not bound(15,function() finish(nil,failure("factory wage confirmation timed out")) end) then return end
+                local ok,err=lease:send("set factory "..proposal.slot.." wages "..o.wages,
+                    {operation="company.factory.wages",reason="one-click factory wage policy"})
+                if not ok then finish(nil,err); return end
+                if not active then return end
+                ok,err=lease:send("display factory "..proposal.slot,{operation="company.factory.preview",reason="verify new factory wages"})
+                if not ok then finish(nil,err) end
+            end
             local function buy_factory(base)
             phase,sent="settling",true
             local ok,problem=lease:send("buy factory "..o.commodity,{operation="company.factory.buy",reason="explicit single-factory confirmation"})
@@ -242,7 +294,7 @@ function API.company.prepareFactory(context,options,callback)
                 if not equal(actual,expected) or not equal(after.depots,base.depots) or after.cash~=base.cash-COST then
                     finish(nil,failure("company cash and exact new factory slot did not reconcile")); return
                 end
-                proposal.confirmed=true; proposal.company_cash=after.cash; finish(proposal)
+                proposal.confirmed=true; proposal.company_cash=after.cash; set_wages()
             end)
             if not bound(15,function() finish(nil,failure("purchase confirmation timed out")) end) then return end
             local requested,read_error=lease:send(channel=="business" and "di business" or "di company",

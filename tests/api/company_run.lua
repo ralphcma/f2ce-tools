@@ -697,5 +697,60 @@ test("new depot appearing between preview and confirm cancels instead of silentl
     c.depots={"Example World"}; assert(h:confirm(function(_,err) e=err end)); build_fresh()
     assert(e); equal(buys(),0); equal(depot_buys(),0)
 end)
+local function auto_options()
+    local o=site_options(); o.automation=true; o.wages=40; o.planet_limit=2; o.reserved_workers=150; o.review_prices=true
+    return o
+end
+local function wage_commands()
+    local n=0; for _,r in ipairs(mock.sent) do if r.command:match("^set factory ") then n=n+1 end end; return n
+end
+for _,rank in ipairs({"Industrialist","Manufacturer"}) do
+test(rank.." automatic build verifies new factory then sets exactly 40 wages once",function()
+    build_reset(rank); local proposal,result,err
+    local h=assert(API.company.prepareFactory(context,auto_options(),function(v,e) proposal,err=v,e end)); build_fresh(rank)
+    assert(proposal,tostring(err)); equal(proposal.wages,40); equal(wage_commands(),0)
+    assert(h:confirm(function(v,e) result,err=v,e end)); build_fresh(rank); equal(buys(),1)
+    local channel=rank=="Industrialist" and "business" or "company"; local c=mock.gmcp.char[channel]
+    c.cash=5000000; c.factories[2]={number=2,planet="Example World",output="Firewalls"}
+    mock:fireEvent("gmcp.char."..channel); equal(wage_commands(),1); equal(result,nil)
+    equal(h:status().phase,"setting_wages"); equal(mock.sent[#mock.sent-1].command,"set factory 2 wages 40")
+    equal(mock.sent[#mock.sent].command,"display factory 2")
+    for _,line in ipairs(lines(fixture:gsub("Facility #1","Facility #2"))) do observer(line) end
+    assert(result,tostring(err)); equal(result.wages,40); equal(result.wages_confirmed,true); equal(API.commands._lease,nil)
+    equal(h:confirm(function() end),nil); equal(buys(),1); equal(wage_commands(),1)
+end)
+end
+test("automatic two-per-planet, reserved workforce and positive-after-wages gates",function()
+    for _,case in ipairs({"planet","workers","margin","input_margin","invalid_wages"}) do
+        build_reset(); local o=auto_options(); local err
+        if case=="planet" then mock.gmcp.char.company.factories[2]={number=2,planet="Example World",output="Firewalls"}; mock:fireEvent("gmcp.char.company") end
+        if case=="margin" then mock.gmcp.exchange.commodities.Firewalls.buy=100 end
+        if case=="input_margin" then mock.gmcp.exchange.commodities.Semiconductors.sell=10000 end
+        if case=="invalid_wages" then o.wages=41 end
+        local h,e=API.company.prepareFactory(context,o,function(_,why) err=why end)
+        if h then build_fresh(nil,case=="workers" and 299 or 2500); assert(err,case) else assert(e,case) end
+        equal(buys(),0); equal(depot_buys(),0); equal(wage_commands(),0)
+    end
+end)
+test("wage failure cancellation and lost authority retain uncertain purchase without retry",function()
+    for _,case in ipairs({"wrong_wage","wrong_factory","timeout","cancel","authority"}) do
+        build_reset(); local err,result
+        local h=assert(API.company.prepareFactory(context,auto_options(),function() end)); build_fresh()
+        assert(h:confirm(function(v,e) result,err=v,e end)); build_fresh()
+        if case=="authority" then API._modules[context.module_id].spec.authorize=function(op) return op~="company.factory.wages" end end
+        local c=mock.gmcp.char.company; c.cash=5000000; c.factories[2]={number=2,planet="Example World",output="Firewalls"}
+        mock:fireEvent("gmcp.char.company")
+        if case=="cancel" then h:cancel("OFF")
+        elseif case=="timeout" then mock:runTimers()
+        elseif case~="authority" then
+            local text=fixture:gsub("Facility #1","Facility #2")
+            if case=="wrong_wage" then text=text:gsub("Wages: 40ig","Wages: 0ig") else text=text:gsub("Location: Example World","Location: Elsewhere") end
+            for _,line in ipairs(lines(text)) do if observer then observer(line) end end
+        end
+        equal(result,nil); equal(h:status().uncertain,true); equal(API.commands._lease,nil); equal(buys(),1)
+        if case~="cancel" then code(err,"E_FACTORY_UNCONFIRMED") end
+        equal(h:confirm(function() end),nil); mock:runTimers(); equal(buys(),1); equal(wage_commands(),case=="authority" and 0 or 1)
+    end
+end)
 print(string.format("RESULT %d passed, %d failed",passed,failed))
 if failed>0 then os.exit(1) end
