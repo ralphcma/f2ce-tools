@@ -1,5 +1,11 @@
 # Factory automation API — 2026-09-20
 
+Integration package: `3.3.0-native-ew31`. This follows the existing ew30 build
+and adds the bounded automation/wage-verification service described below.
+It supersedes the incorrectly numbered `ew29-pr` / `ew29-factory-auto`
+candidate artifacts. The manifest now carries ew31, so ordinary builds no
+longer need a version override. This remains an upstream-review candidate.
+
 `API.company.factoryAutomationVersion == 1` advertises optional bounded
 automation fields on the existing `prepareFactory` / `confirm` operation.
 Existing manual clients retain their prior behavior.
