@@ -8,6 +8,7 @@ local DEPOT_COST,DEPOT_WORKERS=1004480,7
 API.company.factorySiteVersion=1
 API.company.factoryPriceReviewVersion=1
 API.company.factoryAutomationVersion=1
+API.company.factoryCompetitionVersion=1
 local limits={Industrialist=8,Manufacturer=15}
 local function norm(v) return type(v)=="string" and v:lower() or "" end
 local function integer(v,lo,hi) return type(v)=="number" and v==math.floor(v) and v>=lo and v<=hi end
@@ -65,6 +66,7 @@ local function validate_options(o)
     if o.require_depot~=nil and type(o.require_depot)~="boolean" then return false end
     if o.depot_only~=nil and type(o.depot_only)~="boolean" then return false end
     if o.review_prices~=nil and type(o.review_prices)~="boolean" then return false end
+    if o.exclude_existing_commodity~=nil and type(o.exclude_existing_commodity)~="boolean" then return false end
     if o.factory_limit~=nil and not integer(o.factory_limit,1,15) then return false end
     if o.automation then
         if o.automation~=true or o.wages~=40 or o.planet_limit~=2 or o.factory_limit~=8
@@ -97,6 +99,21 @@ local function ready(state,report,o,review_prices)
         or tonumber(stamina.cur)*100/tonumber(stamina.max)<=threshold
         or (API.protection and API.protection.isRecovering()) then return nil,failure("recover stamina/death protection before construction") end
     local workers=report and report.planets and report.planets[norm(o.planet)]
+    if not o.depot_only and (o.automation or o.exclude_existing_commodity) then
+        if not workers or workers.factories_verified~=true or type(workers.factories)~="table" then
+            return nil,failure("public planet factory list unavailable; duplicate commodity exclusion cannot be verified")
+        end
+        for _,f in pairs(state.roster) do
+            if norm(f.planet)==norm(o.planet) and norm(f.output)==norm(o.commodity) then
+                return nil,failure("planet already has a "..o.commodity.." factory; no duplicate commodity build")
+            end
+        end
+        for _,f in ipairs(workers.factories) do
+            if norm(f.output)==norm(o.commodity) then
+                return nil,failure("planet already has a "..o.commodity.." factory ("..f.owner.."); no duplicate commodity build")
+            end
+        end
+    end
     if not workers or norm(report.system)~=norm(o.system) or workers.closed
         or not integer(workers.available,0,1000000000) or workers.available<labour
         or workers.economy=="None" or (o.biological_required and workers.economy~="Biological") then
@@ -210,13 +227,18 @@ function API.company.prepareFactory(context,options,callback)
             received[channel]=true
             for _,name in ipairs(channels) do if not received[name] then return end end
             clear()
-            local h,problem=API.company._systemWithLease(context,o.system,function(report,err)
+            local function inspected(report,err)
                 child=nil; if not active then return end
                 if not report then finish(nil,err); return end
                 local state,invalid=snapshot(o)
                 if not identity(state) then finish(nil,invalid or failure("owner, rank or exchange changed")); return end
                 done(state,report)
-            end,lease)
+            end
+            local h,problem
+            if not o.depot_only and (o.automation or o.exclude_existing_commodity) then
+                if type(API.company._planetWithLease)~="function" then finish(nil,failure("public planet factory inspection unavailable")); return end
+                h,problem=API.company._planetWithLease(context,o.planet,o.system,inspected,lease)
+            else h,problem=API.company._systemWithLease(context,o.system,inspected,lease) end
             if not h then finish(nil,problem) elseif h:status().active then child=h end
         end
         for _,channel in ipairs(channels) do local name=channel

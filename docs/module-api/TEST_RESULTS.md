@@ -1,5 +1,25 @@
 # Module API verification
 
+## 2026-09-20 All-company factory commodity exclusion
+
+Candidate `f2ce-tools-3.3.0-native-ew33.mpackage`, SHA256
+`9ebcec5a8c9507b6025ecad68c1ae79af542a2f975d3ac32a85fc8cd580ea0e5`.
+
+All native suites pass on source and reconstructed package: 262 Lua syntax
+checks, 32 metadata checks, and 228 packaged script/trigger bodies matching
+source. Company coverage is 85 tests, including public empty/foreign/wrapped
+factory lists, invalid/partial/duplicate rows, both company ranks, late competitor
+appearance before purchase and after depot purchase, cancellation/identity/
+timeout cleanup, and unchanged wage-acknowledgement ordering. The private
+consumer suite has 535 passing tests, including 119 native integration checks.
+
+Public `di planet` commercial activity provides all-company factory evidence;
+`di system` omits that section. Automatic builds and opt-in manual builds reread
+the public list on their own lease before spending. Missing evidence is not an
+empty list; an uncertain partial site is never replayed. This is not an atomic
+reservation against another player building concurrently. No fresh live-server
+purchases or graphical profile acceptance were performed for this change.
+
 ## 2026-09-20 Factory wage acknowledgement ordering
 
 Candidate `f2ce-tools-3.3.0-native-ew32.mpackage`, SHA256

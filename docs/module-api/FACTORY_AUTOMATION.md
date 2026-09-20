@@ -1,7 +1,7 @@
 # Factory automation API — 2026-09-20
 
-Integration package: `3.3.0-native-ew32`. This follows ew31 and fixes the
-ordering of wage verification after purchase, plus settled-handle cleanup.
+Integration package: `3.3.0-native-ew33`. This adds an all-company duplicate
+commodity check. ew32 fixed wage-verification ordering and settled-handle cleanup.
 ew31 added the bounded automation service described below and superseded the
 incorrectly numbered `ew29-pr` / `ew29-factory-auto` candidates. The manifest
 carries the package version; ordinary builds need no version override.
@@ -10,6 +10,15 @@ This remains an upstream-review candidate.
 `API.company.factoryAutomationVersion == 1` advertises optional bounded
 automation fields on the existing `prepareFactory` / `confirm` operation.
 Existing manual clients retain their prior behavior.
+
+`API.company.factoryCompetitionVersion == 1` advertises public-planet exclusion.
+All automatic factory builds, and manual proposals with
+`exclude_existing_commodity=true`, read `di planet <planet>` under the existing
+command lease at preview, confirmation and any post-depot continuation. They
+refuse a matching commodity in ANY company's public factory list or the owned
+roster. Malformed/partial/missing lists fail closed. Depot-only builds are exempt.
+This is a fresh snapshot check, not an atomic server-side reservation against
+another player building between the response and the purchase command.
 
 Automation requires `automation=true`, `wages=40`, `planet_limit=2`,
 `factory_limit=8`, `require_depot=true`, and a nonnegative integer

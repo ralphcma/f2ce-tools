@@ -478,11 +478,14 @@ local function build_options()
 end
 local function build_reset(rank)
     reset(rank); mock.gmcp.exchange={commodities={Semiconductors={stock=5000,sell=300,buy=200},Firewalls={stock=100,sell=1000,buy=900}}}
+    local channel=rank=="Industrialist" and "business" or "company"
+    mock.gmcp.char[channel].factories[1].output="Droids"; mock:fireEvent("gmcp.char."..channel)
 end
-local function build_fresh(rank,workers,economy)
+local function build_fresh(rank,workers,economy,commercial)
     mock:fireEvent("gmcp.room.info"); mock:fireEvent("gmcp.char.vitals.stamina"); mock:fireEvent("gmcp.exchange.commodities")
     if not observer then return end
-    observer("System information for the Example system:\n  Member of the Test cartel\nExample World, Example system, Test cartel\n  Owner: Example\n  Economy: "..(economy or "Leisure").."    Workers available: "..(workers or 2500).."/2500")
+    local prefix=mock.sent[#mock.sent-1].command=="di planet Example World" and "" or "System information for the Example system:\n  Member of the Test cartel\n"
+    observer(prefix.."Example World, Example system, Test cartel\n  Owner: Example\n  Economy: "..(economy or "Leisure").."    Workers available: "..(workers or 2500).."/2500\n  Shipyard markup: 10%\n  Approval rating: Satisfactory"..(commercial or ""))
     observer(rank=="Industrialist" and "Sample Ltd registered business - CEO Industrialist TestOwner" or "Company Report for Sample Ltd:")
     mock:fireEvent(rank=="Industrialist" and "gmcp.char.business" or "gmcp.char.company")
 end
@@ -869,5 +872,94 @@ test(rank.." depot plus factory automatic display is fenced before verified 40ig
     equal(depot_buys(),1); equal(buys(),1); equal(wage_commands(),1)
 end)
 end
+local planet_fixture=[[Example World, Example system, Test cartel, Test syndicate
+  Owner: Magnate Example
+  Economy: Leisure    Workers available: 2500/2500
+  Shipyard markup: -10%
+  Approval rating: +50
+]]
+local competing="\nCommercial Activities:\n  No warehouses\n  Factories:\n    Foreign Holdings #7 plant producing firewalls\n"
+test("public planet parser reads ALL companies, wrapped rows and a complete empty list",function()
+    local r=assert(API.company._parsePlanet(planet_fixture,"Example World","Example"))
+    equal(r.planets["example world"].factories_verified,true); equal(#r.planets["example world"].factories,0)
+    r=assert(API.company._parsePlanet(planet_fixture..competing.."    Another\n    Company #1 plant producing Droids\n","Example World","Example"))
+    local fs=r.planets["example world"].factories; equal(#fs,2)
+    equal(fs[1].owner,"Foreign Holdings"); equal(fs[1].output,"firewalls"); equal(fs[2].owner,"Another Company")
+    equal(API.company._parsePlanet(planet_fixture,"Elsewhere","Example"),nil)
+    equal(API.company._parsePlanet(planet_fixture,"Example World","Elsewhere"),nil)
+end)
+test("public factory absence is never inferred from malformed or partial records",function()
+    for _,body in ipairs({planet_fixture:gsub("Approval rating:","Missing:"),
+        planet_fixture:gsub("Workers available:","Missing:"),planet_fixture..competing..competing,
+        planet_fixture..competing.."    Foreign Holdings #7 plant producing Firewalls\n",
+        planet_fixture.."\nCommercial Activities:\n  Factories:\n",
+        planet_fixture.."\n    Foreign Holdings #7 plant producing Firewalls\n",
+        planet_fixture..competing:gsub("producing firewalls","producing")}) do
+        equal(API.company._parsePlanet(body,"Example World","Example"),nil)
+    end
+end)
+for _,rank in ipairs({"Industrialist","Manufacturer"}) do
+test(rank.." public planet read requires the complete text AND owned company fence",function()
+    build_reset(rank); local result,err
+    local h=assert(API.company.planet(context,"Example World","Example",function(v,e) result,err=v,e end))
+    equal(mock.sent[#mock.sent-1].command,"di planet Example World")
+    mock:fireEvent("gmcp.char."..(rank=="Industrialist" and "business" or "company"))
+    observer(planet_fixture..competing); equal(result,nil); assert(API.commands._lease)
+    observer(rank=="Industrialist" and "Sample Ltd registered business - CEO Industrialist TestOwner" or "Company Report for Sample Ltd:")
+    assert(result,tostring(err)); equal(#result.planets["example world"].factories,1)
+    equal(h:status().active,false); equal(API.commands._lease,nil)
+end)
+test(rank.." all-company duplicate commodity blocks preview and fresh pre-purchase validation",function()
+    for _,stage in ipairs({"preview","confirm","after_depot","owned_roster"}) do
+        build_reset(rank); local o=site_options(); o.exclude_existing_commodity=true
+        local c=mock.gmcp.char[rank=="Industrialist" and "business" or "company"]
+        if stage=="after_depot" then c.depots={} end
+        if stage=="owned_roster" then c.factories[1].output="FIREWALLS" end
+        mock:fireEvent("gmcp.char."..(rank=="Industrialist" and "business" or "company"))
+        local result,err
+        local h=assert(API.company.prepareFactory(context,o,function(v,e) result,err=v,e end))
+        build_fresh(rank,nil,nil,stage=="preview" and competing or nil)
+        if stage=="confirm" or stage=="after_depot" then
+            assert(result,tostring(err)); result=nil
+            assert(h:confirm(function(v,e) result,err=v,e end))
+            build_fresh(rank,nil,nil,stage=="confirm" and competing or nil)
+            if stage=="after_depot" then
+                equal(depot_buys(),1); c.depots={"Example World"}; c.cash=5995520
+                build_fresh(rank,nil,nil,competing)
+            end
+        end
+        assert(err,stage); assert(tostring(err):find("already has a Firewalls factory",1,true),tostring(err))
+        equal(result,nil); equal(buys(),0); equal(depot_buys(),stage=="after_depot" and 1 or 0)
+        equal(wage_commands(),0); equal(API.commands._lease,nil)
+        equal(h:status().uncertain,stage=="after_depot"); mock:runTimers(); equal(buys(),0)
+    end
+end)
+end
+test("public planet timeout cancellation and late responses never mean no competition",function()
+    build_reset()
+    local invalid,why=API.company.planet(context,nil,"Example",function() end)
+    equal(invalid,nil); code(why,"E_ARGUMENT"); equal(#mock.sent,0)
+    invalid,why=API.company.planet(context,"Example;quit","Example",function() end)
+    equal(invalid,nil); code(why,"E_ARGUMENT"); equal(#mock.sent,0)
+    for _,how in ipairs({"timeout","cancel","disable","identity"}) do
+        build_reset(); local result,err
+        local h=assert(API.company.planet(context,"Example World","Example",function(v,e) result,err=v,e end))
+        local late=observer
+        if how=="cancel" then h:cancel() elseif how=="disable" then API.modules.disable(context.module_id)
+        elseif how=="identity" then mock.gmcp.char.vitals.name="Another"; mock:fireEvent("gmcp.char.vitals"); mock:fireEvent("gmcp.char.company")
+        else late(planet_fixture); mock:runTimers() end
+        equal(result,nil); equal(API.commands._lease,nil)
+        if how=="timeout" or how=="identity" then assert(err) end
+        late(planet_fixture); late("Company Report for Sample Ltd:"); equal(result,nil)
+    end
+end)
+test("a different existing commodity permits one new factory, never a duplicate",function()
+    build_reset(); local o=auto_options(); local result,err
+    local h=assert(API.company.prepareFactory(context,o,function(v,e) result,err=v,e end))
+    local different=competing:gsub("firewalls","Droids")
+    build_fresh(nil,nil,nil,different); assert(result,tostring(err))
+    assert(h:confirm(function(v,e) result,err=v,e end)); build_fresh(nil,nil,nil,different)
+    equal(buys(),1); h:cancel("test complete"); equal(API.commands._lease,nil)
+end)
 print(string.format("RESULT %d passed, %d failed",passed,failed))
 if failed>0 then os.exit(1) end

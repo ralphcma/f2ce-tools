@@ -47,11 +47,54 @@ function API.company._parseSystem(text,system)
     return result
 end
 
-local function read_system(context,system,callback,borrowed)
+-- di planet includes public commercial activity (all companies); di system
+-- deliberately omits it. An ordered company response fences an empty list.
+function API.company._parsePlanet(text,planet,system)
+    if type(text)~="string" or #text>131072 then return nil,"planet response exceeds bounds" end
+    text=text:gsub("\27%[[%d;]*m","")
+    local header=planet..", "..system.." system,"
+    if trim(text):sub(1,#header):lower()~=header:lower() then return nil,"mismatched planet header" end
+    local report,why=API.company._parseSystem("System information for the "..system.." system:\n"..text,system)
+    if not report then return nil,why end
+    local row=report.planets[planet:lower()]; local n=0
+    for _ in pairs(report.planets) do n=n+1 end
+    if not row or n~=1 then return nil,"expected exactly one planet" end
+    local flat=trim(text:gsub("%s+"," "))
+    if count(flat,"Owner:")~=1 or count(flat,"Shipyard markup:")~=(row.economy=="None" and 0 or 1) then
+        return nil,"incomplete planet core fields"
+    end
+    if row.economy~="None" and count(flat,"Approval rating:")+count(flat,"Disaffection rating:")~=1 then
+        return nil,"incomplete planet approval field"
+    end
+    local commercial=count(flat,"Commercial Activities:")
+    local sections=count(flat,"Factories:")
+    if commercial>1 or sections>1 or sections>commercial then return nil,"invalid commercial sections" end
+    local factories,seen={},{}
+    if sections==1 then
+        local body=flat:match("Factories:%s*(.*)") or ""
+        while body~="" do
+            local owner,number,output,rest=body:match("^(.-) #(%d+) plant producing ([%a][%w]*)%s*(.*)$")
+            if not owner or #owner<1 or #owner>100 or not tonumber(number) or tonumber(number)<1 or tonumber(number)>15 then
+                return nil,"incomplete or malformed public factory row"
+            end
+            local key=owner:lower().."\0"..tonumber(number)
+            if seen[key] or #factories>=1000 then return nil,"duplicate or excessive public factory rows" end
+            seen[key]=true; factories[#factories+1]={owner=owner,number=tonumber(number),output=output,planet=planet}
+            body=rest
+        end
+        if #factories==0 then return nil,"empty factory section" end
+    elseif flat:find("plant producing",1,true) then return nil,"factory rows without a section" end
+    row.factories,row.factories_verified=factories,true
+    report.planet=planet
+    return report
+end
+
+local function read_system(context,system,callback,borrowed,planet)
     local name=S.name(system,true)
-    if not name or type(callback)~="function" then return nil,S.error("E_ARGUMENT","valid system and callback required") end
-    local operation="company.system.inspect"
-    local allowed,why=S.authorize(context,operation,{system=name}); if not allowed then return nil,why end
+    if not name or planet~=nil and not S.name(planet,true) or type(callback)~="function" then return nil,S.error("E_ARGUMENT","valid location and callback required") end
+    planet=planet and S.name(planet,true)
+    local operation=planet and "company.planet.inspect" or "company.system.inspect"
+    local allowed,why=S.authorize(context,operation,{system=name,planet=planet}); if not allowed then return nil,why end
     local company; company,why=API.company.snapshot(); if not company then return nil,why end
     local who=API.data.get("vitals")
     local channel=who.rank=="Industrialist" and "business" or "company"
@@ -66,7 +109,7 @@ local function read_system(context,system,callback,borrowed)
     local active,timer,observer,subscription,token=true
     local lines,record,received={},nil,false
     local started,line_count,byte_count=false,0,0
-    local expected_header=("System information for the "..name.." system:"):lower()
+    local expected_header=(planet and (planet..", "..name.." system,") or ("System information for the "..name.." system:")):lower()
     local handle={}
     local function cleanup(reason)
         if not active then return false end
@@ -86,7 +129,15 @@ local function read_system(context,system,callback,borrowed)
             if not ok then API.events.emit("api.callback_error",{label=operation,error=tostring(detail)}) end
         end
     end
-    local function complete() if record and received then record.captured_at=os.time(); finish(record) end end
+    local function complete()
+        if not record or not received then return end
+        local current=API.data.get("vitals"); local owner=API.company.snapshot()
+        if not current or current.name~=who.name or current.rank~=who.rank or not owner
+            or owner.name~=company.name or owner.ceo~=company.ceo then
+            finish(nil,S.error("E_COMPANY_IDENTITY","owner or rank changed before report completion")); return
+        end
+        record.captured_at=os.time(); finish(record)
+    end
     token=context:own(operation,handle,function(value) value:cancel("module_cleanup") end)
     subscription=API.events.subscribe("data."..channel,function(event)
         if not active or not event.received then return end
@@ -105,16 +156,19 @@ local function read_system(context,system,callback,borrowed)
         -- GMCP may precede the trailing text of score/look/company. Do not
         -- treat that earlier command's output or company header as our report.
         if not started then
-            if trim(value:match("^[^\r\n]*")):lower()~=expected_header then return end
+            local first=trim(value:match("^[^\r\n]*")):lower()
+            if planet and first:sub(1,#expected_header)~=expected_header or not planet and first~=expected_header then return end
             started=true
         end
         lines[#lines+1]=value
         local joined=table.concat(lines,"\n")
         if not record then
             local marker=channel=="business" and company.name.." registered business - CEO " or "Company Report for "..company.name..":"
-            local pos=joined:find(pattern(marker))
+            local pos=joined:find("\n"..pattern(marker))
             if pos then
-                local detail; record,detail=API.company._parseSystem(joined:sub(1,pos-1),name)
+                local detail
+                if planet then record,detail=API.company._parsePlanet(joined:sub(1,pos-1),planet,name)
+                else record,detail=API.company._parseSystem(joined:sub(1,pos-1),name) end
                 if not record then return finish(nil,S.error("E_SYSTEM_DISPLAY",detail)) end
                 complete()
             end
@@ -123,7 +177,7 @@ local function read_system(context,system,callback,borrowed)
     if not observer then cleanup("observer_missing"); return nil,S.error("E_CAPABILITY","system observer unavailable") end
     timer=adapter.timer(15,function() finish(nil,S.error("E_COMPANY_TIMEOUT","complete system report and company fence not received within 15 seconds")) end,false)
     if not timer then cleanup("timer_missing"); return nil,S.error("E_CAPABILITY","system timer unavailable") end
-    for _,command in ipairs({"di system "..name,channel=="business" and "di business" or "di company"}) do
+    for _,command in ipairs({planet and ("di planet "..planet) or ("di system "..name),channel=="business" and "di business" or "di company"}) do
         local sent,err=lease:send(command,{reason=operation,operation=operation})
         if not sent then cleanup("send_failed"); return nil,err end
     end
@@ -131,3 +185,8 @@ local function read_system(context,system,callback,borrowed)
 end
 function API.company.system(context,system,callback) return read_system(context,system,callback) end
 API.company._systemWithLease=read_system
+function API.company._planetWithLease(context,planet,system,callback,lease)
+    if not S.name(planet,true) then return nil,S.error("E_ARGUMENT","valid planet required") end
+    return read_system(context,system,callback,lease,planet)
+end
+function API.company.planet(context,planet,system,callback) return API.company._planetWithLease(context,planet,system,callback) end

@@ -144,6 +144,18 @@ Each event is `{channel, available, value, timestamp}`. `value` is a deep copy a
 
 ## Owner-bound company and depot reads
 
+Native ew33 adds `API.company.planet(context, planet, system, callback)` with
+authorization operation `company.planet.inspect`. It reads `di planet <planet>`
+and a rank-appropriate company report on one command lease. The complete text
+and fresh company GMCP are both required; it never infers absence from silence.
+The copied result has `system`, `planet`, `captured_at` and a `planets` map keyed
+by lowercase planet. Each planet includes workforce/economy plus
+`factories_verified=true` and `factories={ {owner,number,output,planet}, ... }`
+covering all companies, not only the caller. Missing/truncated, mismatched or
+duplicated records fail closed. Cancellation, teardown and identity changes
+discard late results. `company.factoryCompetitionVersion == 1` advertises the
+corresponding fresh pre-purchase exclusion; see `FACTORY_AUTOMATION.md`.
+
 Native ew27 adds `company.factory.build` / `API.company.prepareFactory` for
 separately confirmed single-factory construction. See `docs/COMPANY_API.md` for
 bounded options, fresh checks and the mandatory consumer pre-send journal
