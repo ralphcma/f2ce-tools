@@ -437,7 +437,7 @@ function adapter.bulkCancel(callback, reason)
 end
 function adapter.priceAnalyze(commodity, lines, count)
     count = tonumber(count) or tonumber(adapter.setting("commodities", "results_count")) or 5
-    if count ~= count or count ~= math.floor(count) or count < 1 or count > 20 then return nil, "invalid price result count" end
+    if count ~= count or count ~= math.floor(count) or count < 1 or count > 50 then return nil, "invalid price result count" end
     local parsed = f2t_price_parse_data(lines)
     if type(parsed) ~= "table" or type(parsed.buy) ~= "table" or type(parsed.sell) ~= "table"
         or (#parsed.buy == 0 and #parsed.sell == 0) then return nil, "price response contains no usable rows" end

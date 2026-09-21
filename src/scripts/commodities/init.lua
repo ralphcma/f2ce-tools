@@ -17,7 +17,7 @@ f2t_settings_register("commodities", "results_count", {
     label       = "Results count",
     description = "Number of top exchanges to show in price tables",
     default     = 5,
-    min = 1, max = 20,
+    min = 1, max = 50,
 })
 
 -- ── Price capture state ───────────────────────────────────────────────────────

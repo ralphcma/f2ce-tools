@@ -164,6 +164,21 @@ function tests.stamina_unregister_cancels_only_the_owned_native_food_trip()
     truthy(adapter.staminaUnregister(mine)); equal(cancel_count,1); equal(unregister_count,1)
 end
 
+function tests.price_shortlist_accepts_fifty_without_truncating_full_market()
+    function f2t_debug_log() end
+    dofile(adapter_source:gsub("api/adapter.lua$", "commodities/price_parser.lua"))
+    local lines = {}
+    for i=1,60 do
+        lines[#lines+1] = "System: Buyer "..i.." is buying 1000 tons at "..(1000-i).."ig/ton"
+        lines[#lines+1] = "System: Seller "..i.." is selling 1000 tons at "..(400+i).."ig/ton"
+    end
+    local value = assert(adapter.priceAnalyze("Artifacts",lines,50))
+    equal(#value.analysis.top_buy,50); equal(#value.analysis.top_sell,50)
+    equal(#value.parsed.buy,60); equal(#value.parsed.sell,60)
+    equal(value.analysis.top_buy[50].price,950)
+    equal(adapter.priceAnalyze("Artifacts",lines,51),nil)
+end
+
 local names = {}; for name in pairs(tests) do names[#names + 1] = name end; table.sort(names)
 for _, name in ipairs(names) do
     local ok, err = xpcall(tests[name], function(value) return debug.traceback(tostring(value), 2) end)

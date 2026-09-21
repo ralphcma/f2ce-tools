@@ -1,5 +1,47 @@
 # Module API verification
 
+## 2026-09-20 Durable commodity rotation and guarded normal sales
+
+Candidate `f2ce-tools-3.3.0-native-ew36.mpackage`, SHA256
+`42f671c525efbccbb6fc6e58b936fcfbace3145abb41e133dc7be6097db45c03`.
+
+All native suites pass on source and reconstructed package: 267 Lua syntax
+checks, 32 metadata checks, 231 packaged Lua bodies matching source, 60 hauling
+refusal/accounting/guard tests, 20 rotation persistence tests, and seven native
+adapter tests including a 50-result shortlist with the full 60-row market kept.
+The private consumer passes all 535 tests, including its 119 native integration
+tests. Its companion is FedHauler 1.17.28; legacy APIs without `prices.maxResults`
+continue at 20 during staged upgrades, while this native API advertises 50.
+No live profile installation or gameplay was performed.
+
+The 67-commodity catalog is reviewed in full. Every eligible commodity gets at
+most one load/attempt per round, not repeated loads of the five highest-ranked
+goods. Unavailable, excluded and unprofitable goods are reviewed without trades.
+An attempt is written and verified in both per-profile checkpoint copies before
+its detail request/travel. The files live outside the package folder and contain
+only revision/round/commodity markers, never executable or resumed authority.
+The next explicit start reloads progress after stop/reconnect/package replacement;
+interrupting an attempt therefore skips it until the next round. `haul rotation`
+reports progress without activating anything. Saving/reading errors fail closed;
+one valid copy can recover a damaged copy, but two invalid copies cannot reset
+the round silently. Tests exercise every commodity across reloads, same-run
+advancement, profile isolation, catalog changes, incomplete/duplicate reviews,
+permission/write/close failures, corrupt copies, and stale run callbacks.
+
+The existing protected recovery sale is now also the normal sale path. Each bay
+requires a current-room quote covering the highest remaining cargo cost and both
+receipt/cargo reconciliation before another bay. A post-order quote received
+before its text receipt remains usable; the pre-order quote cannot be reused.
+Counted bulk buys are unchanged, but purchase receipts now supply exact total
+costs. Sale receipts supply exact revenue, so completed-cycle/session profit no
+longer extrapolates first-bay costs or uses remote quote prices. Unexpected cargo
+and legacy dump-phase entry points cannot bypass the guards or jettison cargo.
+Tests also cover forced-pause refusal handoff and actual end-to-end profit sums.
+
+The server still has no atomic minimum-bid sell command: a concurrent change
+between the checked quote and execution can affect one bay. Its actual receipt
+is recorded and remaining sales stop if that race takes the bid below cost.
+
 ## 2026-09-20 Full-market buyers and break-even cargo recovery
 
 Candidate `f2ce-tools-3.3.0-native-ew35.mpackage`, SHA256

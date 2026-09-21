@@ -38,6 +38,7 @@ dofile(root .. "/src/scripts/commodities/bulk_sell.lua")
 dofile(root .. "/src/scripts/hauling/state_machine.lua")
 dofile(root .. "/src/scripts/hauling/exchange_recovery.lua")
 dofile(root .. "/src/scripts/hauling/exchange_phases.lua")
+local real_complete_cycle = f2t_hauling_complete_commodity_cycle
 function f2t_hauling_do_stop()
     stopped=stopped+1
     F2T_HAULING_STATE.active=false
@@ -84,7 +85,7 @@ local function local_quote(bid, kind)
     f2t_hauling_recovery_observe(kind or "full")
 end
 local function sell()
-    if F2T_HAULING_STATE.sell_recovery then local_quote(F2T_HAULING_STATE.sell_location.price) end
+    local_quote(F2T_HAULING_STATE.sell_location.price)
     F2T_HAULING_STATE.current_phase="selling"; f2t_hauling_phase_sell()
 end
 local function no_timer() equal(next(timers),nil,"watchdog cancelled") end
@@ -97,20 +98,21 @@ end)
 test("not-buying refusal advances immediately without reselecting first buyer", function()
     reset(); cargo(3); sell(); trigger("sell_error_not_buying")
     equal(navigated[1],"Buyer B"); equal(queries,1); equal(#sent,1)
-    equal(sent[1],"sell cargo"); equal(#gmcp.char.ship.cargo,3); no_timer()
+    equal(sent[1],"sell nanofabrics 1"); equal(#gmcp.char.ship.cargo,3); no_timer()
 end)
 test("Galactic Administration refusal bypasses the watchdog", function()
     reset(); cargo(3); sell(); trigger("sell_error_restricted")
     equal(navigated[1],"Buyer B"); equal(queries,1); equal(stopped,0); no_timer()
 end)
 test("partial buy followed by refusal delivers its confirmed cargo", function()
-    reset(); buy(); cargo(1); f2t_bulk_buy_success(); trigger("buy_error_not_selling")
+    reset(); buy(); cargo(1); f2t_bulk_buy_success(7500); trigger("buy_error_not_selling")
     equal(navigated[1],"Buyer A"); equal(#sent,1)
     equal(F2T_HAULING_STATE.current_commodity_stats.lots_bought,1)
     equal(F2T_HAULING_STATE.current_commodity_stats.total_cost,7500); no_timer()
 end)
 test("partial sale followed by restriction keeps remainder and records sold lots", function()
     reset(); cargo(3); sell(); cargo(2); f2t_bulk_sell_success("NanoFabrics",200,15000)
+    local_quote(200,"tick") -- next guarded bay, which is then refused
     trigger("sell_error_restricted")
     equal(navigated[1],"Buyer B"); equal(#gmcp.char.ship.cargo,2)
     equal(F2T_HAULING_STATE.current_commodity_stats.lots_sold,1)
@@ -237,12 +239,12 @@ test("late reply for the previous commodity cannot overwrite new route", functio
     reply("NanoFabrics",{},{top_sell={row("Stale",100)},top_buy={row("Stale Buyer",200)}})
     equal(#navigated,before); equal(F2T_HAULING_STATE.buy_location.planet,"Supplier A")
 end)
-test("existing cargo refusal does not jettison it to make room for purchases", function()
+test("unexpected existing cargo stops before any unguarded clearing sale", function()
     reset(); cargo(3); buy(); trigger("sell_error_restricted")
-    equal(stopped,1); equal(#sent,1); equal(#gmcp.char.ship.cargo,3)
+    equal(stopped,1); equal(#sent,0); equal(#gmcp.char.ship.cargo,3)
 end)
 test("dump watchdog cannot navigate or jettison uncertain cargo", function()
-    reset(); cargo(3); f2t_hauling_phase_dump_cargo()
+    reset(); cargo(3); local_quote(200); f2t_hauling_phase_dump_cargo()
     local timer=F2T_BULK_STATE.watchdogTimerId; timers[timer]=nil; timer.callback()
     equal(stopped,1); equal(#navigated,0); equal(#sent,1); equal(#gmcp.char.ship.cargo,3)
 end)
@@ -411,5 +413,76 @@ test("reloaded state cannot be mutated by the old recovery timer", function()
     timer.callback(); equal(#sent,2); equal(stopped,0)
     equal(F2T_HAULING_STATE.current_phase,"buying")
 end)
+test("initial buyer quote below actual cost sends no sale", function()
+    reset(); cargo(3); local_quote(99); f2t_hauling_phase_sell()
+    equal(#sent,0); equal(navigated[1],"Buyer B"); equal(#gmcp.char.ship.cargo,3)
+end)
+
+test("normal buyer records actual revenue not a stale remote quote", function()
+    reset(); cargo(2); local_quote(180); f2t_hauling_phase_sell()
+    cargo(1); f2t_bulk_sell_success("NanoFabrics",175,13125)
+    equal(F2T_HAULING_STATE.current_commodity_stats.total_revenue,13125)
+    equal(#sent,1); local_quote(174,"tick"); equal(#sent,2)
+end)
+
+test("normal profitable load advances after once rather than buying same commodity", function()
+    reset(); cargo(1); local_quote(200); f2t_hauling_phase_sell()
+    cargo(0); f2t_bulk_sell_success("NanoFabrics",195,14625)
+    equal(completed,1); equal(removed,1); equal(queries,1); equal(#sent,1)
+end)
+
+test("post-order quote before text receipt is retained for the next bay", function()
+    reset(); cargo(2); sell(); local_quote(190,"tick"); cargo(1)
+    f2t_bulk_sell_success("NanoFabrics",200,15000)
+    equal(#sent,2); equal(F2T_HAULING_STATE.current_commodity_stats.total_revenue,15000)
+end)
+
+test("changing purchase prices sum real receipt costs", function()
+    reset(); buy(); cargo(1); matches={"", "NanoFabrics", "7,500"}; trigger("buy_success")
+    cargo(2); matches={"", "NanoFabrics", "7,650"}; trigger("buy_success")
+    cargo(3); matches={"", "NanoFabrics", "7,800"}; trigger("buy_success")
+    equal(F2T_HAULING_STATE.current_commodity_stats.total_cost,22950)
+    equal(F2T_HAULING_STATE.actual_cost,102); equal(navigated[1],"Buyer A")
+    equal(#sent,1,"counted bulk purchase preserved")
+end)
+
+test("unverifiable purchase receipts stop instead of estimating first-bay cost", function()
+    reset(); buy(); cargo(1); f2t_bulk_buy_success(); trigger("buy_error_not_selling")
+    equal(stopped,1); equal(#navigated,0); equal(F2T_HAULING_STATE.current_commodity_stats.total_cost,0)
+end)
+
+test("forced pause records purchase cost and holds navigation for resume", function()
+    reset(); buy(); cargo(1); F2T_HAULING_STATE.paused=true
+    f2t_bulk_buy_success(7500); trigger("buy_error_not_selling")
+    equal(F2T_HAULING_STATE.current_commodity_stats.total_cost,7500)
+    equal(#navigated,0); equal(F2T_HAULING_STATE.current_phase,"navigating_to_sell")
+end)
+
+test("completed session profit equals actual purchase and sale receipts", function()
+    reset(); buy()
+    for i=1,3 do cargo(i); f2t_bulk_buy_success(7350+i*150) end
+    local saved_complete=f2t_hauling_complete_commodity_cycle
+    f2t_hauling_complete_commodity_cycle=real_complete_cycle
+    function f2t_is_rank_exactly() return false end
+    F2T_HAULING_STATE.session_profit=0; F2T_HAULING_STATE.commodity_total_profit=0
+    F2T_HAULING_STATE.total_cycles=0
+    sell()
+    for remaining=2,0,-1 do
+        cargo(remaining); matches={"", "NanoFabrics", tostring(13500+remaining*750)}
+        trigger("sell_success")
+        if remaining>0 then local_quote(180+remaining*10,"tick") end
+    end
+    equal(F2T_HAULING_STATE.session_profit,19800)
+    equal(F2T_HAULING_STATE.total_cycles,1); equal(removed,1)
+    f2t_hauling_complete_commodity_cycle=saved_complete
+end)
+
+test("forced pause at a zero-fill refusal resumes with another supplier", function()
+    reset(); buy(); F2T_HAULING_STATE.paused=true; trigger("buy_error_not_selling")
+    equal(#navigated,0); equal(F2T_HAULING_STATE.current_phase,"finding_buy")
+    F2T_HAULING_STATE.paused=false; f2t_hauling_transition("finding_buy")
+    equal(navigated[1],"Supplier B"); equal(#sent,1)
+end)
+
 print(string.format("RESULT %d passed, %d failed",passed,failed))
 if failed > 0 then os.exit(1) end

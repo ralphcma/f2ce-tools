@@ -33,6 +33,9 @@ elseif subcommand == "resume" then
 elseif subcommand == "status" then
     f2t_hauling_show_status()
 
+elseif subcommand == "rotation" then
+    f2t_hauling_rotation_status()
+
 elseif subcommand == "settings" then
     f2t_handle_settings_command("hauling", f2t_parse_subcommand(args, "settings") or "")
 

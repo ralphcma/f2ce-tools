@@ -152,25 +152,24 @@ end
 
 -- Phase 1: analyze commodities, queue the most profitable
 function f2t_hauling_phase_analyze()
+    local state, request = F2T_HAULING_STATE, {}
+    state.exchange_analysis_request = request
     f2t_debug_log("[hauling] Phase: Analyzing commodities")
     cecho("\n<green>[hauling]<reset> Analyzing commodity prices (this may take a minute)...\n")
 
     f2t_price_get_all_data(function(results)
-        if not F2T_HAULING_STATE.active or F2T_HAULING_STATE.paused then
+        if state ~= F2T_HAULING_STATE or state.exchange_analysis_request ~= request
+            or not state.active or state.paused then
             return
         end
 
         local excluded = parse_excluded_commodities()
 
-        local tradeable = {}
-        for _, analysis in ipairs(results) do
-            local commodity_lower = analysis.commodity:lower()
-            if excluded[commodity_lower] then
-                f2t_debug_log("[hauling] Skipping excluded commodity: %s", analysis.commodity)
-            elseif analysis.profit and analysis.profit > 0 and
-               #analysis.top_buy > 0 and #analysis.top_sell > 0 then
-                table.insert(tradeable, analysis)
-            end
+        local tradeable, round, catalog_count = f2t_hauling_rotation_queue(results, excluded)
+        if not tradeable then
+            cecho("\n<red>[hauling]<reset> " .. tostring(round) .. " No travel or purchase started.\n")
+            f2t_hauling_do_stop()
+            return
         end
 
         if #tradeable == 0 then
@@ -184,7 +183,7 @@ function f2t_hauling_phase_analyze()
         end)
 
         F2T_HAULING_STATE.commodity_queue = {}
-        local count = math.min(5, #tradeable)
+        local count = #tradeable
         for i = 1, count do
             local comm = tradeable[i]
             table.insert(F2T_HAULING_STATE.commodity_queue, {
@@ -197,7 +196,8 @@ function f2t_hauling_phase_analyze()
 
         F2T_HAULING_STATE.queue_index = 1
 
-        cecho(string.format("\n<green>[hauling]<reset> Queued <cyan>%d<reset> profitable commodities\n", count))
+        cecho(string.format("\n<green>[hauling]<reset> Rotation %d: queued %d unattempted profitable commodities " ..
+            "after reviewing all %d; one load each.\n", round, count, catalog_count))
 
         f2t_hauling_next_commodity()
     end)
@@ -358,6 +358,12 @@ function f2t_hauling_next_commodity()
     end
 
     local commodity_data = F2T_HAULING_STATE.commodity_queue[F2T_HAULING_STATE.queue_index]
+    local saved, reason = f2t_hauling_rotation_claim(commodity_data.commodity)
+    if not saved then
+        cecho("\n<red>[hauling]<reset> " .. tostring(reason) .. " No travel or purchase started.\n")
+        f2t_hauling_do_stop()
+        return
+    end
     F2T_HAULING_STATE.current_commodity = commodity_data.commodity
     F2T_HAULING_STATE.expected_profit = commodity_data.expected_profit
 
@@ -423,8 +429,8 @@ function f2t_hauling_get_commodity_details(commodity)
         f2t_debug_log("[hauling] Analysis - top_buy count: %d, top_sell count: %d, profit: %d",
             #analysis.top_buy, #analysis.top_sell, analysis.profit or 0)
 
-        -- Margin re-validated only after the first cycle; first cycle always starts trading.
-        if F2T_HAULING_STATE.commodity_cycles > 0 then
+        -- Each rotation buys only one load, so validate even its first purchase.
+        do
             local best_sell_price = #analysis.top_buy > 0 and analysis.top_buy[1].price or 0
             local best_buy_price = #analysis.top_sell > 0 and analysis.top_sell[1].price or 0
 
@@ -479,198 +485,20 @@ function f2t_hauling_get_commodity_details(commodity)
     end)
 end
 
--- Remove current commodity from queue and move to next
+-- Never abandon or dump owned cargo below cost to advance the rotation.
 function f2t_hauling_remove_current_commodity()
-    if not F2T_HAULING_STATE.commodity_queue then
-        return
-    end
-
-    -- Cargo still aboard has to be dumped before switching commodities.
     local cargo = gmcp.char.ship.cargo
-    if cargo and #cargo > 0 then
-        local commodity = F2T_HAULING_STATE.current_commodity
-        cecho(string.format(
-            "\n<yellow>[hauling]<reset> Abandoning <cyan>%s<reset>, finding exchange to dump remaining cargo\n",
-            commodity))
-        f2t_debug_log("[hauling] Need to dump %d lots of %s before switching commodity", #cargo, commodity)
-
-        F2T_HAULING_STATE.dump_attempts = 0
-
-        f2t_price_check_commodity(commodity, function(_commodity_name, _parsed_data, analysis)
-            if not F2T_HAULING_STATE.active or F2T_HAULING_STATE.paused then
-                return
-            end
-
-            if analysis and analysis.top_buy and #analysis.top_buy > 0 then
-                local dump_location = analysis.top_buy[1]
-
-                f2t_debug_log("[hauling] Dumping at: %s: %s (price: %d ig/ton)",
-                    dump_location.system, dump_location.planet, dump_location.price)
-
-                local destination = string.format("%s exchange", dump_location.planet)
-                cecho(string.format(
-                    "\n<yellow>[hauling]<reset> Navigating to dump location: <cyan>%s exchange<reset>\n",
-                    dump_location.planet))
-
-                local nav_result = f2t_map_navigate(destination, {
-                    on_result = function(success)
-                        if not F2T_HAULING_STATE.active or F2T_HAULING_STATE.paused then
-                            return
-                        end
-                        if not success then
-                            cecho(string.format(
-                                "\n<yellow>[hauling]<reset> Cannot reach %s, trying next dump location\n",
-                                dump_location.planet))
-                            f2t_hauling_find_next_dump_location()
-                        end
-                    end,
-                })
-
-                F2T_HAULING_STATE.current_phase = "dumping_cargo"
-                F2T_HAULING_STATE.dump_location = dump_location
-
-                if f2t_map_navigate_ok(nav_result) and not F2T_SPEEDWALK_ACTIVE then
-                    tempTimer(0.5, function()
-                        if not F2T_HAULING_STATE.active or F2T_HAULING_STATE.paused then
-                            return
-                        end
-                        f2t_hauling_phase_dump_cargo()
-                    end)
-                end
-            else
-                -- No exchanges buying this commodity - jettison and move on.
-                cecho(string.format(
-                    "\n<yellow>[hauling]<reset> No exchanges buying %s, jettisoning remaining cargo\n", commodity))
-                f2t_hauling_jettison_cargo(function()
-                    f2t_hauling_finish_remove_commodity()
-                end)
-            end
-        end)
-        return
-    end
-
+    if cargo and #cargo > 0 then f2t_hauling_find_next_sell_location(); return end
     f2t_hauling_finish_remove_commodity()
 end
 
--- Phase: dump cargo at any price (when abandoning a commodity)
+-- Preserve old phase entry points without retaining an unguarded sale bypass.
 function f2t_hauling_phase_dump_cargo()
-    local commodity = F2T_HAULING_STATE.current_commodity
-
-    if not commodity then
-        cecho("\n<red>[hauling]<reset> No commodity to dump\n")
-        f2t_hauling_stop()
-        return
-    end
-
-    cecho(string.format("\n<yellow>[hauling]<reset> Dumping all <cyan>%s<reset> cargo at any price...\n", commodity))
-    f2t_debug_log("[hauling] Dumping commodity: %s", commodity)
-
-    f2t_bulk_sell_start(nil, nil, function(_sold_commodity, lots_sold, status, _error_msg)
-        f2t_debug_log("[hauling] Dump sell complete: sold %d lots, status: %s", lots_sold, status)
-
-        if not F2T_HAULING_STATE.active or F2T_HAULING_STATE.paused then
-            return
-        end
-
-        if status == "error" then
-            cecho("\n<red>[hauling]<reset> Cargo sale could not be confirmed; stopping with cargo preserved.\n")
-            f2t_hauling_do_stop()
-            return
-        end
-        local cargo = gmcp.char.ship.cargo
-        if cargo and #cargo > 0 then
-            f2t_debug_log("[hauling] %d lots remain after dump, finding next exchange", #cargo)
-            cecho(string.format(
-                "\n<yellow>[hauling]<reset> %d lots remain, finding next exchange to dump...\n", #cargo))
-
-            f2t_hauling_find_next_dump_location()
-        else
-            f2t_debug_log("[hauling] All cargo dumped successfully")
-            cecho("\n<green>[hauling]<reset> All cargo dumped\n")
-
-            f2t_hauling_finish_remove_commodity()
-        end
-    end)
+    f2t_hauling_phase_recovery_sell()
 end
 
--- Find next dump location after partial dump
 function f2t_hauling_find_next_dump_location()
-    if not F2T_HAULING_STATE.current_commodity then
-        f2t_hauling_stop()
-        return
-    end
-
-    local commodity = F2T_HAULING_STATE.current_commodity
-
-    F2T_HAULING_STATE.dump_attempts = (F2T_HAULING_STATE.dump_attempts or 0) + 1
-
-    local MAX_DUMP_ATTEMPTS = 5
-
-    f2t_debug_log("[hauling] Finding dump location #%d for %s (max: %d)",
-        F2T_HAULING_STATE.dump_attempts, commodity, MAX_DUMP_ATTEMPTS)
-
-    if F2T_HAULING_STATE.dump_attempts > MAX_DUMP_ATTEMPTS then
-        cecho(string.format(
-            "\n<yellow>[hauling]<reset> Attempted %d exchanges, jettisoning remaining <cyan>%s<reset>...\n",
-            MAX_DUMP_ATTEMPTS, commodity))
-        f2t_debug_log("[hauling] Max dump attempts exceeded, jettisoning cargo")
-
-        f2t_hauling_jettison_cargo(function()
-            f2t_hauling_finish_remove_commodity()
-        end)
-        return
-    end
-
-    f2t_price_check_commodity(commodity, function(_commodity_name, _parsed_data, analysis)
-        if not F2T_HAULING_STATE.active or F2T_HAULING_STATE.paused then
-            return
-        end
-
-        if #analysis.top_buy >= F2T_HAULING_STATE.dump_attempts then
-            local next_dump = analysis.top_buy[F2T_HAULING_STATE.dump_attempts]
-
-            f2t_debug_log("[hauling] Next dump location: %s: %s at %d ig/ton",
-                next_dump.system, next_dump.planet, next_dump.price)
-
-            local destination = string.format("%s exchange", next_dump.planet)
-            cecho(string.format("\n<yellow>[hauling]<reset> Navigating to dump location: <cyan>%s exchange<reset>\n",
-                next_dump.planet))
-
-            local nav_result = f2t_map_navigate(destination, {
-                on_result = function(success)
-                    if not F2T_HAULING_STATE.active or F2T_HAULING_STATE.paused then
-                        return
-                    end
-                    if not success then
-                        cecho(string.format(
-                            "\n<yellow>[hauling]<reset> Cannot reach %s, trying next dump location\n",
-                            next_dump.planet))
-                        f2t_hauling_find_next_dump_location()
-                    end
-                end,
-            })
-
-            F2T_HAULING_STATE.current_phase = "dumping_cargo"
-            F2T_HAULING_STATE.dump_location = next_dump
-
-            if f2t_map_navigate_ok(nav_result) and not F2T_SPEEDWALK_ACTIVE then
-                tempTimer(0.5, function()
-                    if not F2T_HAULING_STATE.active or F2T_HAULING_STATE.paused then
-                        return
-                    end
-                    f2t_hauling_phase_dump_cargo()
-                end)
-            end
-        else
-            cecho(string.format(
-                "\n<yellow>[hauling]<reset> No more exchanges buying <cyan>%s<reset>, jettisoning...\n", commodity))
-            f2t_debug_log("[hauling] No more exchanges available, jettisoning cargo")
-
-            f2t_hauling_jettison_cargo(function()
-                f2t_hauling_finish_remove_commodity()
-            end)
-        end
-    end)
+    f2t_hauling_find_next_sell_location()
 end
 
 -- Actually remove commodity from queue (called after cargo is clear)
@@ -738,49 +566,10 @@ function f2t_hauling_phase_buy()
         return
     end
 
-    -- Cargo left over from a previous failed sell has to clear before buying.
     local existing_cargo = gmcp.char and gmcp.char.ship and gmcp.char.ship.cargo
     if existing_cargo and #existing_cargo > 0 then
-        F2T_HAULING_STATE.cargo_clear_attempts = (F2T_HAULING_STATE.cargo_clear_attempts or 0) + 1
-        if F2T_HAULING_STATE.cargo_clear_attempts > 2 then
-            cecho(string.format("\n<red>[hauling]<reset> Failed to clear cargo after %d attempts, stopping\n",
-                F2T_HAULING_STATE.cargo_clear_attempts - 1))
-            f2t_debug_log("[hauling] Cargo clear attempts exhausted (%d), stopping",
-                F2T_HAULING_STATE.cargo_clear_attempts - 1)
-            f2t_hauling_do_stop()
-            return
-        end
-        cecho(string.format(
-            "\n<yellow>[hauling]<reset> Cargo hold not empty (%d lots remaining), selling before buying\n",
-            #existing_cargo))
-        f2t_debug_log("[hauling] Cargo hold has %d lots, selling before buying (attempt %d)",
-            #existing_cargo, F2T_HAULING_STATE.cargo_clear_attempts)
-        f2t_bulk_sell_start(nil, nil, function(_commodity_sold, _lots_sold, status, _error_msg, code)
-            if not F2T_HAULING_STATE.active or F2T_HAULING_STATE.paused then
-                return
-            end
-            if status == "error" or code == "not_buying" or code == "sale_restricted" then
-                cecho("\n<yellow>[hauling]<reset> Could not clear existing cargo; stopping with cargo preserved.\n")
-                f2t_hauling_do_stop()
-                return
-            end
-            local still_has_cargo = gmcp.char and gmcp.char.ship and gmcp.char.ship.cargo
-            if still_has_cargo and #still_has_cargo > 0 then
-                cecho(string.format(
-                    "\n<yellow>[hauling]<reset> Still %d lots unsold, jettisoning to clear hold\n", #still_has_cargo))
-                f2t_debug_log("[hauling] Jettisoning %d unsellable lots", #still_has_cargo)
-                f2t_hauling_jettison_cargo(function()
-                    if not F2T_HAULING_STATE.active or F2T_HAULING_STATE.paused then
-                        return
-                    end
-                    -- Retry buy; the clear-attempt counter is already incremented above.
-                    f2t_hauling_transition("buying")
-                end)
-                return
-            end
-            F2T_HAULING_STATE.cargo_clear_attempts = 0
-            f2t_hauling_transition("buying")
-        end)
+        cecho("\n<red>[hauling]<reset> Unexpected cargo before purchase; stopping with cargo preserved.\n")
+        f2t_hauling_do_stop()
         return
     end
 
@@ -789,10 +578,12 @@ function f2t_hauling_phase_buy()
 
     f2t_debug_log("[hauling] Buying commodity: %s", F2T_HAULING_STATE.current_commodity)
 
-    f2t_bulk_buy_start(F2T_HAULING_STATE.current_commodity, nil, function(commodity, lots_bought, status, error_msg, code)
+    local state = F2T_HAULING_STATE
+    local market = state.exchange_market
+    f2t_bulk_buy_start(state.current_commodity, nil, function(commodity, lots_bought, status, error_msg, code, receipt)
         f2t_debug_log("[hauling] Buy complete: commodity=%s, lots=%d, status=%s", commodity, lots_bought, status)
 
-        if not F2T_HAULING_STATE.active or F2T_HAULING_STATE.paused then
+        if state ~= F2T_HAULING_STATE or not state.active or state.exchange_market ~= market then
             return
         end
 
@@ -806,7 +597,8 @@ function f2t_hauling_phase_buy()
         if code == "not_selling" then
             reject_location("buy", F2T_HAULING_STATE.buy_location)
             if lots_bought == 0 and cargo and #cargo == 0 then
-                f2t_hauling_retry_exchange("buy")
+                if state.paused then state.current_phase = "finding_buy"
+                else f2t_hauling_retry_exchange("buy") end
                 return
             end
             -- A partially filled counted buy is still cargo to deliver, not
@@ -818,28 +610,32 @@ function f2t_hauling_phase_buy()
             return
         end
 
-        -- Cargo lot shape: {commodity, base, cost, origin}.
-        local cargo_lot = cargo[1]   -- all lots are the same commodity
-        if cargo_lot then
-            F2T_HAULING_STATE.actual_cost = cargo_lot.cost or 0
-            f2t_debug_log("[hauling] Cargo cost: %d ig/ton", F2T_HAULING_STATE.actual_cost)
+        -- Sum actual server purchase receipts, never extrapolate from the first
+        -- bay or a remote quote when subsequent bays may cost more.
+        local total_cost = receipt and tonumber(receipt.cost)
+        if lots_bought < 1 or not total_cost or total_cost ~= total_cost or total_cost < 0
+            or total_cost == math.huge or receipt.count ~= lots_bought or #cargo ~= lots_bought
+            or not f2t_hauling_cargo_floor() then
+            cecho("\n<red>[hauling]<reset> Purchase receipts/cargo did not reconcile; stopping without retry.\n")
+            f2t_hauling_do_stop()
+            return
         end
-
-        local total_cost = lots_bought * F2T_HAULING_STATE.actual_cost * 75   -- 75 tons/lot
+        F2T_HAULING_STATE.actual_cost = total_cost / (lots_bought * 75)
         F2T_HAULING_STATE.current_commodity_stats.lots_bought =
             F2T_HAULING_STATE.current_commodity_stats.lots_bought + lots_bought
         F2T_HAULING_STATE.current_commodity_stats.total_cost =
             F2T_HAULING_STATE.current_commodity_stats.total_cost + total_cost
 
-        f2t_debug_log("[hauling] Tracking buy: %d lots at %d ig/ton = %d ig total cost",
+        f2t_debug_log("[hauling] Tracking buy: %d lots averaging %.2f ig/ton = %d ig confirmed cost",
             lots_bought, F2T_HAULING_STATE.actual_cost, total_cost)
 
         local bought_msg =
-            "\n<green>[hauling]<reset> Bought %d lots of <cyan>%s<reset> at <yellow>%d ig/ton<reset> " ..
+            "\n<green>[hauling]<reset> Bought %d lots of <cyan>%s<reset> averaging <yellow>%.2f ig/ton<reset> " ..
             "(cost: %d ig)\n"
         cecho(string.format(bought_msg, lots_bought, commodity, F2T_HAULING_STATE.actual_cost, total_cost))
 
-        f2t_hauling_transition("navigating_to_sell")
+        if state.paused then state.current_phase = "navigating_to_sell"
+        else f2t_hauling_transition("navigating_to_sell") end
     end)
 end
 
@@ -881,105 +677,11 @@ function f2t_hauling_phase_navigate_to_sell()
     end
 end
 
--- Phase 5: sell commodity
+-- Every exchange sale, including the initial buyer, requires a current-room
+-- quote covering the remaining cargo cost. The guarded path records receipts
+-- and advances the rotation after this single load is cleared.
 function f2t_hauling_phase_sell()
-    if F2T_HAULING_STATE.sell_recovery then
-        f2t_hauling_phase_recovery_sell()
-        return
-    end
-    if not F2T_HAULING_STATE.current_commodity then
-        cecho("\n<red>[hauling]<reset> No commodity selected\n")
-        f2t_hauling_stop()
-        return
-    end
-
-    cecho(string.format("\n<green>[hauling]<reset> Selling <cyan>%s<reset>...\n",
-        F2T_HAULING_STATE.current_commodity))
-
-    f2t_debug_log("[hauling] Selling commodity: %s", F2T_HAULING_STATE.current_commodity)
-
-    f2t_bulk_sell_start(F2T_HAULING_STATE.current_commodity, nil, function(commodity, lots_sold, status, error_msg, code)
-        f2t_debug_log("[hauling] Sell complete: commodity=%s, lots=%d, status=%s", commodity, lots_sold, status)
-
-        if not F2T_HAULING_STATE.active or F2T_HAULING_STATE.paused then
-            return
-        end
-
-        if status == "error" then
-            cecho(string.format("\n<red>[hauling]<reset> Sell failed: %s\n", error_msg or "unknown error"))
-            f2t_hauling_do_stop()
-            return
-        end
-
-        -- sell_location.price is what the exchange pays us (its buy price).
-        local exchange_buy_price = F2T_HAULING_STATE.sell_location.price
-        local total_revenue = lots_sold * exchange_buy_price * 75   -- lots * price/ton * 75 tons/lot
-        F2T_HAULING_STATE.current_commodity_stats.lots_sold =
-            F2T_HAULING_STATE.current_commodity_stats.lots_sold + lots_sold
-        F2T_HAULING_STATE.current_commodity_stats.total_revenue =
-            F2T_HAULING_STATE.current_commodity_stats.total_revenue + total_revenue
-
-        if code == "not_buying" or code == "sale_restricted" then
-            reject_location("sell", F2T_HAULING_STATE.sell_location)
-            if #(gmcp.char.ship.cargo or {}) > 0 then
-                f2t_hauling_find_next_sell_location()
-                return
-            end
-        end
-
-        f2t_debug_log("[hauling] Tracking sell: %d lots at %d ig/ton = %d ig total revenue",
-            lots_sold, exchange_buy_price, total_revenue)
-
-        -- Profit margin: (revenue - cost) / cost.
-        local profit_per_ton = exchange_buy_price - F2T_HAULING_STATE.actual_cost
-        local profit_margin_pct = (profit_per_ton / F2T_HAULING_STATE.actual_cost) * 100
-
-        f2t_debug_log("[hauling] Profit margin: %.1f%% (%d - %d = %d profit per ton)",
-            profit_margin_pct, exchange_buy_price, F2T_HAULING_STATE.actual_cost, profit_per_ton)
-
-        local margin_too_low = profit_margin_pct < F2T_HAULING_STATE.margin_threshold_pct
-        local selling_at_loss = exchange_buy_price <= F2T_HAULING_STATE.actual_cost
-
-        if selling_at_loss or margin_too_low then
-            if selling_at_loss then
-                local loss_msg =
-                    "\n<red>[hauling]<reset> Exchange buying at/below our cost for <cyan>%s<reset> " ..
-                    "(%d <= %d ig/ton) - LOSS!\n"
-                cecho(string.format(loss_msg, commodity, exchange_buy_price, F2T_HAULING_STATE.actual_cost))
-            else
-                cecho(string.format(
-                    "\n<yellow>[hauling]<reset> Profit margin too low for <cyan>%s<reset> (%.1f%% < %.0f%%)\n",
-                    commodity, profit_margin_pct, F2T_HAULING_STATE.margin_threshold_pct))
-            end
-            cecho("\n<yellow>[hauling]<reset> Abandoning commodity and dumping remaining cargo\n")
-
-            -- Log the cycle with whatever sold before abandoning the rest.
-            f2t_hauling_complete_commodity_cycle()
-
-            f2t_hauling_remove_current_commodity()
-            return
-        end
-
-        local sold_msg =
-            "\n<green>[hauling]<reset> Sold %d lots of <cyan>%s<reset> at <yellow>%d ig/ton<reset> " ..
-            "(realized margin: %.1f%%, revenue: %d ig)\n"
-        cecho(string.format(sold_msg, lots_sold, commodity, exchange_buy_price, profit_margin_pct, total_revenue))
-
-        local cargo = gmcp.char.ship.cargo
-        if cargo and #cargo > 0 then
-            f2t_debug_log("[hauling] Partial sell, %d lots remaining, finding next location", #cargo)
-
-            f2t_hauling_find_next_sell_location()
-        else
-            F2T_HAULING_STATE.sell_attempts = 0
-
-            f2t_hauling_complete_commodity_cycle()
-
-            -- Refresh prices before starting the next cycle to confirm it's still profitable.
-            f2t_debug_log("[hauling] Cycle complete, checking if still profitable")
-            f2t_hauling_get_commodity_details(F2T_HAULING_STATE.current_commodity)
-        end
-    end)
+    f2t_hauling_phase_recovery_sell()
 end
 
 -- Complete a commodity cycle (all cargo sold)

@@ -84,6 +84,8 @@ function f2t_bulk_buy_start(commodity, requested_lots, callback)
     F2T_BULK_STATE.batched = true
     F2T_BULK_STATE.error_reason = nil
     F2T_BULK_STATE.error_code = nil
+    F2T_BULK_STATE.purchase_cost = 0
+    F2T_BULK_STATE.purchase_receipts = 0
 
     -- Only show user feedback in user mode
     if not callback then
@@ -116,13 +118,18 @@ function f2t_bulk_buy_next()
 end
 
 -- Handle successful buy
-function f2t_bulk_buy_success()
+function f2t_bulk_buy_success(cost)
     if not F2T_BULK_STATE.active or F2T_BULK_STATE.command ~= "buy" then
         return
     end
 
     f2t_bulk_watchdog_stop()
 
+    cost = tonumber(cost)
+    if cost and cost == cost and cost >= 0 and cost < math.huge then
+        F2T_BULK_STATE.purchase_cost = (F2T_BULK_STATE.purchase_cost or 0) + cost
+        F2T_BULK_STATE.purchase_receipts = (F2T_BULK_STATE.purchase_receipts or 0) + 1
+    end
     F2T_BULK_STATE.remaining = F2T_BULK_STATE.remaining - 1
     f2t_debug_log("[bulk-buy] Buy successful (%d remaining)", F2T_BULK_STATE.remaining)
 
@@ -181,6 +188,7 @@ function f2t_bulk_buy_finish()
     local commodity = F2T_BULK_STATE.commodity
     local callback = F2T_BULK_STATE.callback
     local reason, code = F2T_BULK_STATE.error_reason, F2T_BULK_STATE.error_code
+    local receipt = {cost=F2T_BULK_STATE.purchase_cost, count=F2T_BULK_STATE.purchase_receipts}
 
     f2t_debug_log("[bulk-buy] Finishing: bought %d lots of %s (%d tons)", bought, commodity, tons)
 
@@ -193,6 +201,8 @@ function f2t_bulk_buy_finish()
     F2T_BULK_STATE.sent_command = nil
     F2T_BULK_STATE.error_reason = nil
     F2T_BULK_STATE.error_code = nil
+    F2T_BULK_STATE.purchase_cost = nil
+    F2T_BULK_STATE.purchase_receipts = nil
 
     -- User mode: show formatted output
     if not callback then
@@ -203,6 +213,6 @@ function f2t_bulk_buy_finish()
     else
         local status = bought > 0 and "success" or "failed"
         if code == "timeout" then status = "error" end
-        callback(commodity, bought, status, reason, code)
+        callback(commodity, bought, status, reason, code, receipt)
     end
 end

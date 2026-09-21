@@ -22,7 +22,7 @@ F2T_HAULING_STATE = {
     handler_id = nil,     -- GMCP event handler ID for current mode
 
     -- Commodity queue and caching
-    commodity_queue = {},       -- Top 5 commodities from price all (sorted by profit)
+    commodity_queue = {},       -- Unattempted profitable commodities in the persisted rotation
     queue_index = 1,            -- Current position in queue
     current_commodity = nil,    -- Current commodity being traded
 
@@ -123,7 +123,7 @@ f2t_settings_register("hauling", "margin_threshold", {
 
 f2t_settings_register("hauling", "cycle_pause", {
     label       = "Cycle pause (s)",
-    description = "Seconds to pause after completing all 5 commodities (0 = no pause)",
+    description = "Seconds to pause after reviewing a full commodity rotation (0 = no pause)",
     default     = 60,
     min = 0, max = 300,
 })

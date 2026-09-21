@@ -18,6 +18,11 @@ try {
     foreach ($file in $jsonFiles) { Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json | Out-Null }
     Write-Output "METADATA=$($jsonFiles.Count) passed"
     $tradeTriggers = Get-Content src/triggers/commodities/triggers.json -Raw | ConvertFrom-Json
+    $buyPattern = ($tradeTriggers | Where-Object name -eq 'buy_success').patterns[0].pattern
+    if ('75 tons of Artifacts have been purchased at a cost of 44,700ig and loaded onto your ship.' -notmatch $buyPattern `
+        -or $Matches[1] -ne 'Artifacts' -or $Matches[2] -ne '44,700') {
+        throw 'Purchase trigger must capture commodity and actual receipt cost'
+    }
     $restrictionPattern = ($tradeTriggers | Where-Object name -eq 'sell_error_restricted').patterns[0].pattern
     foreach ($line in @(
         'This exchange is currently restricted from non-deficit commodity sales by order of the Galactic Administration.',
@@ -36,6 +41,7 @@ try {
             @('tests/exchange_walker/run.lua', $SourceRoot),
             @('tests/commodities/bulk_counted_run.lua', $SourceRoot),
             @('tests/hauling/refusal_run.lua', $SourceRoot),
+            @('tests/hauling/rotation_run.lua', $SourceRoot),
             @('tests/stamina/cancel_run.lua', $SourceRoot),
             @('tests/map/startup_topology_sync_run.lua', "$SourceRoot/src/scripts/map/events.lua"),
             @('tests/map/topology_capture_safety_run.lua', "$SourceRoot/src/scripts/map/topology_capture.lua"),

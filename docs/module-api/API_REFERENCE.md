@@ -42,7 +42,9 @@ Capabilities include `modules`, `events`, `navigation`, `navigation.status.v33`,
   the native confirmed count/status. Neither assumes transport means success.
 - `settings.get(component,key)` and `character.hasRank(rank)` are read-only.
 - `prices.analyze(commodity,lines,count)` returns parsed/analysis copies with a
-  validated 1–20 result count; `prices.display` invokes native presentation.
+  validated 1–50 result count (native ew36+); `prices.maxResults` advertises 50.
+  Older APIs without the hint retain their 20-result limit. Full parsed arrays
+  remain untruncated; `prices.display` invokes native presentation.
   The stock checker has an explicit native provider hook for API-owned hauling;
   only that owner's provider may borrow its hauling broker lease. It does not
   replace the global checker. Foreign activity and captures remain blockers.

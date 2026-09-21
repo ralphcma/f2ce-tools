@@ -9,19 +9,40 @@
 > for native Walker or FedHauler 1.16.0. Walker adds a Founder+ tab beside
 > Who/Events/Exchange, with a sortable remote exchange table and bottom controls.
 
-Native candidate **ew35** fixes exchange/premium hauling refusal handling:
+Native candidate **ew36** adds a saved, per-profile **67-commodity rotation**:
+one load/attempt per commodity before starting another round. Every full market
+review considers the complete bundled catalog, skips unavailable/unprofitable
+or excluded goods, and queues all remaining candidates rather than the top five.
+Progress is saved before travel in two verified `f2ce-hauling-rotation-v1-*.json`
+files in the profile root, outside the package folder. Stops, reconnects and
+package replacement preserve progress; load/reconnect never starts automation.
+An interrupted attempt counts as attempted, so restarting does not hammer it.
+Use `haul rotation` to inspect progress. A failed save blocks further travel;
+one corrupt copy can recover from the other, but two invalid copies require
+repair rather than silently restarting the rotation. This is per profile, not
+a cross-account hauling coordinator.
+
+The price API/table setting now accepts up to **50 buyers and suppliers**;
+FedHauler 1.17.28 requests that limit. Routing still searches the full filtered
+market beyond those shortlists. Counted bulk purchases are retained, with costs
+summed from actual server receipts. **All exchange hauling sales**, including
+the original buyer, check fresh local bids against the highest remaining bay
+cost and sell one bay at a time. Completed-load/session profits use actual
+receipts, not cached quotes or an extrapolated first-bay cost. Existing unexpected
+cargo is preserved, never dumped or jettisoned to start a new purchase.
+
+Exchange/premium hauling refusal handling:
 Galactic Administration sale restrictions and not-buying/not-selling replies
 advance immediately to an eligible cached alternative, without waiting for the
 15-second bulk watchdog. Refused locations are excluded for that commodity and
 trade direction until the next commodity pass; they are not map blacklists.
-Routing now uses the full, policy-filtered price response, not the UI's top-20
+Routing uses the full, policy-filtered price response, not the UI's bounded
 shortlist. An exhausted cache gets one price refresh. No remaining supplier skips
 the commodity. New purchases retain their margin checks; already-owned recovery
 cargo may clear at break-even or better. Recovery checks the highest remaining
 bay cost against a fresh, current-room bid and sells one bay at a time, waiting
 for both its cargo reconciliation and a new quote before another sale. A cleared
-recovery load advances to the next commodity. Normal hauling keeps counted bulk
-commands. No break-even buyer leaves cargo aboard with an explanatory stop
+load advances to the next commodity. No break-even buyer leaves cargo aboard with an explanatory stop
 message. Uncertain timed-out trades stop without retries. The server does not
 offer an atomic minimum-price order: if a concurrent change beats the last local
 quote, the receipt is recorded and further recovery sales stop.

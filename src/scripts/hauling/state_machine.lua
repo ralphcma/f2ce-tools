@@ -26,6 +26,7 @@ function f2t_hauling_start(requested_mode)
     F2T_HAULING_STATE.pause_requested = false
     F2T_HAULING_STATE.stopping = false
     F2T_HAULING_STATE.cycle_count = 0
+    F2T_HAULING_STATE.exchange_analysis_request = nil
     raiseEvent("f2tHaulingStatusChanged")
 
     -- Set navigation ownership for hauling
@@ -424,6 +425,7 @@ function f2t_hauling_finish_stop()
     F2T_HAULING_STATE.buy_location = nil
     F2T_HAULING_STATE.sell_location = nil
     F2T_HAULING_STATE.exchange_market = nil
+    F2T_HAULING_STATE.exchange_analysis_request = nil
     F2T_HAULING_STATE.expected_profit = 0
     F2T_HAULING_STATE.actual_cost = 0
     F2T_HAULING_STATE.current_commodity_stats = {

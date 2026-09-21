@@ -30,7 +30,7 @@
     "name": "buy_success",
     "patterns": [
       {
-        "pattern": "^75 tons of .+ have been purchased at a cost of [\\d,]+ig",
+        "pattern": "^75 tons of (.+) have been purchased at a cost of ([\\d,]+)ig",
         "type": "regex"
       }
     ]

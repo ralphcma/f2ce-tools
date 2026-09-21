@@ -12,6 +12,7 @@ f2t_register_help("haul", {
         {cmd = "haul resume", desc = "Resume paused hauling"},
         {cmd = "", desc = ""},
         {cmd = "haul status", desc = "Show current hauling state and statistics"},
+        {cmd = "haul rotation", desc = "Show saved per-profile commodity rotation progress"},
         {cmd = "", desc = ""},
         {cmd = "haul settings", desc = "Manage settings (margin_threshold, cycle_pause)"}
     },
@@ -26,6 +27,6 @@ f2t_register_help("haul", {
         "",
         "haul settings           # List all settings",
         "haul settings set margin_threshold 25  # Set min profit margin to 25%",
-        "haul settings set cycle_pause 60      # Pause 60s after trading 5 commodities"
+        "haul settings set cycle_pause 60      # Pause 60s after a full commodity rotation"
     }
 })

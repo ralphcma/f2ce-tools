@@ -143,6 +143,8 @@ function API.settings.get(component, key)
     if ok then return S.copy(value) end
     return nil, S.error("E_SETTINGS", value)
 end
+-- Additive capability hint; older native/legacy APIs accept at most 20.
+API.prices.maxResults = 50
 function API.prices.analyze(commodity, lines, count)
     if not S.name(commodity) or type(lines) ~= "table" then return nil, S.error("E_ARGUMENT", "commodity and price lines required") end
     local ok, result, why = pcall(API._adapter.priceAnalyze, commodity, S.copy(lines), count)

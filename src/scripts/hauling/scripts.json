@@ -8,6 +8,7 @@
   {"name": "akaturi_capture_timer"},
   {"name": "akaturi"},
   {"name": "akaturi_phases"},
+  {"name": "exchange_rotation"},
   {"name": "exchange_recovery"},
   {"name": "exchange_phases"},
   {"name": "po_discovery"},

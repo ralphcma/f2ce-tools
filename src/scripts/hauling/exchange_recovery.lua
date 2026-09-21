@@ -1,6 +1,6 @@
--- Clearing cargo after a refused sale is different from starting a new trade.
--- Only this recovery path sells one bay at a time: the next bay requires a new
--- local commodity receipt so a falling bid cannot blindly drain the whole hold.
+-- All exchange hauling sales use this guard, not just refused-sale recovery.
+-- The next bay requires a new local commodity receipt so a falling bid cannot
+-- blindly drain the whole hold. Counted bulk purchases are unchanged.
 local function normalized(value) return tostring(value or ""):lower() end
 local function room_key()
     local room = gmcp and gmcp.room and gmcp.room.info
@@ -47,7 +47,7 @@ local function finish_recovery()
     state.sell_recovery = nil
     state.recovery_after_sequence = nil
     state.recovery_expected_lots = nil
-    cecho("\n<green>[hauling]<reset> Recovery cargo cleared; moving to the next commodity.\n")
+    cecho("\n<green>[hauling]<reset> Cargo cleared; moving to the next commodity in the saved rotation.\n")
     f2t_hauling_complete_commodity_cycle()
     f2t_hauling_remove_current_commodity()
 end
@@ -88,7 +88,7 @@ function f2t_hauling_phase_recovery_sell()
     end
     local floor = f2t_hauling_cargo_floor()
     if not floor or not state.sell_location then
-        stop_recovery("Recovery cargo/cost could not be verified; stopping with cargo preserved.")
+        stop_recovery("Cargo/cost could not be verified; stopping with cargo preserved.")
         return
     end
     local watch = state.recovery_watch
@@ -128,11 +128,12 @@ function f2t_hauling_phase_recovery_sell()
         state.current_phase = "selling"
         state.sell_location.price = quote.bid
         local before = #live_cargo
-        -- Exactly one bay; normal profitable hauling still uses counted bulk.
+        local sent_sequence = watch.sequence
+        -- Exactly one bay, including at the originally selected buyer.
         f2t_bulk_sell_start(state.current_commodity, 1, function(_, lots, status, _reason, code, receipt)
             if state ~= F2T_HAULING_STATE or not state.active or state.exchange_market ~= market
                 or state.recovery_watch ~= watch then return end
-            if status == "error" then stop_recovery("Recovery order timed out or failed; no automatic retry."); return end
+            if status == "error" then stop_recovery("Sale order timed out or failed; no automatic retry."); return end
             if lots == 0 and (code == "not_buying" or code == "sale_restricted") then
                 if state.paused then
                     state.current_phase = "finding_sell"
@@ -142,18 +143,20 @@ function f2t_hauling_phase_recovery_sell()
                 return
             end
             local revenue = receipt and tonumber(receipt.revenue)
-            if lots ~= 1 or not revenue or revenue <= 0 then
-                stop_recovery("Recovery sale receipt is uncertain; no automatic retry.")
+            if lots ~= 1 or not revenue or revenue ~= revenue or revenue <= 0 or revenue == math.huge then
+                stop_recovery("Sale receipt is uncertain; no automatic retry.")
                 return
             end
             state.current_commodity_stats.lots_sold = state.current_commodity_stats.lots_sold + 1
             state.current_commodity_stats.total_revenue = state.current_commodity_stats.total_revenue + revenue
             if revenue < floor * 75 then
-                stop_recovery("Bid changed before the server executed the sale; stopping remaining recovery cargo.")
+                stop_recovery("Bid changed before the server executed the sale; stopping remaining cargo.")
                 return
             end
             state.recovery_expected_lots = before - 1
-            state.recovery_after_sequence = watch.sequence
+            -- Accept the genuine post-order tick even if it preceded the text
+            -- sale receipt. Cargo and receipt still must both reconcile.
+            state.recovery_after_sequence = sent_sequence
             state.current_phase = "waiting_sell_quote"
             local function settled()
                 if not current() or type(gmcp.char.ship.cargo) ~= "table"
@@ -169,7 +172,7 @@ function f2t_hauling_phase_recovery_sell()
             watch.wait = settled
             watch.timer = tempTimer(3, function()
                 if not current() then return end
-                stop_recovery("Recovery cargo did not reconcile; stopping without retry.")
+                stop_recovery("Sale cargo did not reconcile; stopping without retry.")
             end)
             settled()
         end)
@@ -177,7 +180,7 @@ function f2t_hauling_phase_recovery_sell()
     watch.wait = advance
     watch.timer = tempTimer(3, function()
         if not current() then return end
-        next_buyer("Fresh local recovery quote unavailable")
+        next_buyer("Fresh local sale quote unavailable")
     end)
     advance()
 end
