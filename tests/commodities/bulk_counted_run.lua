@@ -115,5 +115,113 @@ test("missing hold GMCP during replies is not an early completion signal", funct
     equal(#sent,1,"missing GMCP cannot duplicate purchase")
 end)
 
+local function sale(count, callback)
+    gmcp.char.ship.cargo={}
+    for _=1,count+1 do table.insert(gmcp.char.ship.cargo,{commodity="Libraries",cost=400}) end
+    return f2t_bulk_sell_start("Libraries",count,callback or function(_,lots,status,_,code,receipt)
+        callback_result={lots=lots,status=status,code=code,receipt=receipt}
+    end)
+end
+local function customs(line, continuation)
+    matches={line}
+    dofile(root .. "/src/triggers/commodities/" .. (continuation and "sell_customs_continuation" or "sell_customs") .. ".lua")
+end
+local function receipt(line, commodity, gross)
+    matches={line,commodity or "Libraries",gross or "49425"}
+    dofile(root .. "/src/triggers/commodities/sell_success.lua")
+end
+local tax_line="The Candy cartel deducts 11,430ig customs from the 49,425ig sale proceeds, leaving 37,995ig net."
+local sold_line="75 tons of Libraries sold for 49425ig from your ship"
+
+test("reported Candy customs and short sale receipt count one net sale", function()
+    reset(); sale(1); customs(tax_line)
+    equal(callback_result,nil,"customs is not a sale confirmation")
+    equal(F2T_BULK_STATE.remaining,1,"customs cannot decrement bays")
+    receipt(sold_line)
+    equal(callback_result.lots,1,"one confirmed bay"); equal(callback_result.status,"success","sale recognized")
+    equal(callback_result.receipt.revenue,37995,"net revenue not gross")
+    equal(sent[1],"sell libraries 1","one sale"); equal(#sent,1,"no retry")
+    receipt(sold_line); equal(callback_result.lots,1,"late duplicate ignored after completion")
+    equal(F2T_BULK_STATE.sale_customs,nil,"tax capture cleared")
+end)
+
+test("legacy sale receipt without customs retains its full proceeds", function()
+    reset(); sale(1)
+    receipt("75 tons of Libraries sold to the exchange for 49,425ig from your ship","Libraries","49,425")
+    equal(callback_result.receipt.revenue,49425,"untaxed proceeds")
+end)
+
+test("server-wrapped customs notice pairs with the following sale", function()
+    reset(); sale(1)
+    customs("The Candy cartel deducts 11,430ig customs from the 49,425ig sale proceeds, leaving")
+    equal(callback_result,nil,"incomplete notice waits")
+    customs(" 37,995ig net.",true); receipt(sold_line)
+    equal(callback_result.receipt.revenue,37995,"wrapped net")
+end)
+
+test("counted sale applies each customs notice only to its own receipt", function()
+    reset(); sale(2); customs(tax_line); receipt(sold_line)
+    equal(callback_result,nil,"second bay still pending")
+    receipt(sold_line)
+    equal(callback_result.lots,2,"both receipts")
+    equal(callback_result.receipt.revenue,87420,"one taxed and one untaxed receipt")
+    equal(#sent,1,"one counted command")
+end)
+
+test("invalid customs arithmetic stops without retry or gross accounting", function()
+    reset(); sale(1)
+    customs(tax_line:gsub("37,995","37,994"))
+    equal(callback_result.status,"error","invalid tax fails closed")
+    equal(callback_result.code,"invalid_receipt","specific failure")
+    equal(callback_result.lots,0,"customs is not an acknowledgement")
+    equal(#sent,1,"no retry"); equal(F2T_BULK_STATE.sale_customs,nil,"capture cleared")
+end)
+
+test("incomplete customs cannot silently account the later gross as net", function()
+    reset(); sale(1); customs("The Candy cartel deducts 11,430ig customs from the")
+    receipt(sold_line)
+    equal(callback_result.status,"error","missing net stops")
+    equal(callback_result.receipt.revenue,0,"no gross fallback"); equal(#sent,1,"no retry")
+end)
+
+test("mismatched customs gross or commodity cannot confirm an order", function()
+    for _,kind in ipairs({"gross","commodity"}) do
+        reset(); sale(1); customs(tax_line)
+        receipt(sold_line,kind=="commodity" and "Artifacts" or "Libraries",kind=="gross" and "49000" or "49425")
+        equal(callback_result.status,"error","mismatch stops"); equal(callback_result.lots,0,"no false confirmation")
+        equal(#sent,1,"no duplicate")
+    end
+end)
+
+test("customs alone still times out and cannot leak into another order", function()
+    reset(); sale(1); customs(tax_line); f2t_bulk_sell_error("timeout","timeout")
+    equal(callback_result.status,"error","customs did not confirm sale")
+    equal(F2T_BULK_STATE.sale_customs,nil,"timeout clears capture")
+    sale(1); receipt(sold_line); equal(callback_result.receipt.revenue,49425,"new order is untaxed")
+end)
+
+test("customs outside a sell and stray continuation lines do nothing", function()
+    reset(); customs(tax_line); equal(F2T_BULK_STATE.sale_customs,nil,"idle ignores customs")
+    F2T_BULK_STATE.active=true; F2T_BULK_STATE.command="buy"
+    customs(tax_line); equal(F2T_BULK_STATE.sale_customs,nil,"buy ignores customs")
+    sale(1); customs("37,995ig net.",true); receipt(sold_line)
+    equal(callback_result.receipt.revenue,49425,"no unrelated continuation capture")
+end)
+
+test("ambiguous duplicate customs stops a queue without selling the next commodity", function()
+    reset(); gmcp.char.ship.cargo={{commodity="Libraries",cost=400},{commodity="Artifacts",cost=200}}
+    f2t_bulk_sell_start(nil,nil,function(_,lots,status,_,code) callback_result={lots=lots,status=status,code=code} end)
+    customs(tax_line); customs(tax_line)
+    equal(callback_result.status,"error","queue fails closed")
+    equal(callback_result.lots,0,"no sale confirmation"); equal(#sent,1,"no next-commodity order")
+end)
+
+test("valid zero net customs is recorded instead of falling back to gross", function()
+    reset(); sale(1)
+    customs("The Candy cartel deducts 49,425ig customs from the 49,425ig sale proceeds, leaving 0ig net.")
+    receipt(sold_line); equal(callback_result.receipt.revenue,0,"zero net is real")
+    equal(callback_result.status,"success","valid sale acknowledged")
+end)
+
 io.write(string.format("RESULT %d passed, %d failed\n", passed, failed))
 if failed > 0 then os.exit(1) end

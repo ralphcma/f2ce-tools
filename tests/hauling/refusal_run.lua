@@ -591,6 +591,57 @@ test("real parent ship event settles and handler cleanup removes the wait", func
     equal(F2T_HAULING_STATE.purchase_settlement,nil)
 end)
 
+local function library_cargo(count, cost)
+    cargo(count)
+    for _,lot in ipairs(gmcp.char.ship.cargo) do lot.commodity="Libraries"; lot.cost=cost or 400 end
+end
+local function library_quote()
+    gmcp.room.info={flags={"exchange"},num=1,area="Bio",system="Candy"}
+    gmcp.exchange={commodities={Libraries={buy=659}}}
+    f2t_hauling_recovery_observe("full")
+end
+local function library_receipt()
+    matches={"The Candy cartel deducts 11,430ig customs from the 49,425ig sale proceeds, leaving 37,995ig net."}
+    trigger("sell_customs")
+    matches={"75 tons of Libraries sold for 49425ig from your ship","Libraries","49425"}
+    trigger("sell_success")
+end
+local function library_sale(cost)
+    reset(); F2T_HAULING_STATE.current_commodity="Libraries"
+    F2T_HAULING_STATE.sell_location={planet="Bio",system="Candy",price=659}
+    library_cargo(3,cost); library_quote(); f2t_hauling_phase_sell()
+end
+
+test("reported taxed ship sales reconcile once and continue to the next commodity", function()
+    library_sale()
+    for remaining=2,0,-1 do
+        library_cargo(remaining); library_receipt()
+        equal(stopped,0,"successful sale does not stop hauling")
+        if remaining>0 then library_quote() end
+    end
+    equal(#sent,3); equal(sent[1],"sell libraries 1"); equal(sent[3],"sell cargo")
+    equal(F2T_HAULING_STATE.current_commodity_stats.lots_sold,3)
+    equal(F2T_HAULING_STATE.current_commodity_stats.total_revenue,113985)
+    equal(completed,1); equal(removed,1); no_timer()
+end)
+
+test("taxed text receipt before cargo waits without retry and accepts a preceding price update", function()
+    library_sale(); library_quote(); library_receipt()
+    equal(#sent,1); equal(stopped,0)
+    library_cargo(2); f2t_hauling_recovery_observe("cargo")
+    equal(#sent,2,"one new bay after settled first sale")
+    equal(F2T_HAULING_STATE.current_commodity_stats.total_revenue,37995)
+end)
+
+test("customs making net proceeds below cost preserves remaining cargo and records net", function()
+    library_sale(600); library_cargo(2,600); library_receipt()
+    equal(stopped,1); equal(#sent,1); equal(#gmcp.char.ship.cargo,2)
+    equal(F2T_HAULING_STATE.current_commodity_stats.lots_sold,1)
+    equal(F2T_HAULING_STATE.current_commodity_stats.total_revenue,37995)
+    equal(table.concat(output):find("price change or customs",1,true)~=nil,true)
+    no_timer()
+end)
+
 test("safe-room stop invalidates settlement and still-arriving bulk callbacks immediately", function()
     local saved_settings, saved_navigate = f2t_settings_get, f2t_map_navigate
     function f2t_settings_get(_, name)

@@ -108,10 +108,28 @@
     ]
   },
   {
+    "name": "sell_customs",
+    "patterns": [
+      {
+        "pattern": "^The .+ cartel deducts .+$",
+        "type": "regex"
+      }
+    ]
+  },
+  {
+    "name": "sell_customs_continuation",
+    "patterns": [
+      {
+        "pattern": "^\\s*(?:[\\d,]+ig\\b|customs\\b|from\\b|the\\b|sale\\b|proceeds,|leaving\\b|net\\.).*$",
+        "type": "regex"
+      }
+    ]
+  },
+  {
     "name": "sell_success",
     "patterns": [
       {
-        "pattern": "^75 tons of (.+) sold to the exchange for ([\\d,]+)ig",
+        "pattern": "^75 tons of (.+) sold(?: to the exchange)? for ([\\d,]+)ig(?: from your ship)?\\.?$",
         "type": "regex"
       }
     ]

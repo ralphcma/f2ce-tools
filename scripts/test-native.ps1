@@ -24,6 +24,44 @@ try {
         throw 'Purchase trigger must capture commodity and actual receipt cost'
     }
     $restrictionPattern = ($tradeTriggers | Where-Object name -eq 'sell_error_restricted').patterns[0].pattern
+    $salePattern = ($tradeTriggers | Where-Object name -eq 'sell_success').patterns[0].pattern
+    foreach ($saleLine in @(
+        '75 tons of Libraries sold for 49425ig from your ship',
+        '75 tons of Libraries sold for 49,425ig from your ship.',
+        '75 tons of Libraries sold to the exchange for 49425ig from your ship',
+        '75 tons of Libraries sold to the exchange for 49,425ig',
+        '75 tons of Libraries sold for 49425ig'
+    )) {
+        if ($saleLine -notmatch $salePattern -or $Matches[1] -ne 'Libraries' `
+            -or ($Matches[2] -replace ',', '') -ne '49425') {
+            throw "Sale trigger missed receipt or captured wrong values: $saleLine"
+        }
+    }
+    foreach ($otherLine in @(
+        "This exchange isn't currently buying Libraries.",
+        "You don't have any imported Libraries to sell.",
+        '75 tons of Libraries have been purchased at a cost of 49425ig and loaded onto your ship.',
+        'Someone says: 75 tons of Libraries sold for 49425ig from your ship',
+        '75 tons of Libraries sold for 49425ig from your ship [not a receipt]'
+    )) {
+        if ($otherLine -match $salePattern) { throw "Sale trigger matched unrelated output: $otherLine" }
+    }
+    $customsPattern = ($tradeTriggers | Where-Object name -eq 'sell_customs').patterns[0].pattern
+    $continuationPattern = ($tradeTriggers | Where-Object name -eq 'sell_customs_continuation').patterns[0].pattern
+    if ('The Candy cartel deducts 11,430ig customs from the 49,425ig sale proceeds, leaving 37,995ig net.' -notmatch $customsPattern) {
+        throw 'Customs trigger missed the reported live notice'
+    }
+    # Server wraps on spaces: every possible split after the identifying prefix
+    # must be capturable, including currency-first and net-only continuations.
+    $customsTokens = '11,430ig customs from the 49,425ig sale proceeds, leaving 37,995ig net.'.Split(' ')
+    for ($split = 1; $split -lt $customsTokens.Count; $split++) {
+        $first = 'The Candy cartel deducts ' + ($customsTokens[0..($split-1)] -join ' ')
+        $rest = $customsTokens[$split..($customsTokens.Count-1)] -join ' '
+        if ($first -notmatch $customsPattern -or $rest -notmatch $continuationPattern) {
+            throw "Customs trigger missed wrapped continuation: $rest"
+        }
+    }
+    Write-Output 'TRADE_PATTERNS=live and legacy sale/customs responses passed'
     foreach ($line in @(
         'This exchange is currently restricted from non-deficit commodity sales by order of the Galactic Administration.',
         'This exchange is currently restricted from non-deficit commodity sales by order of the Galactic',
@@ -107,6 +145,14 @@ try {
                     }
                     if ($source -ne $text) {
                         throw "Packaged code differs from tested source: $relative"
+                    }
+                    if ($relative -match '^src/triggers/commodities/(sell_success|sell_customs|sell_customs_continuation)\.lua$') {
+                        $triggerName = $node.SelectSingleNode('name').InnerText
+                        $expectedPattern = ($tradeTriggers | Where-Object name -eq $triggerName).patterns[0].pattern
+                        $patterns = @($node.SelectNodes('regexCodeList/string'))
+                        if ($patterns.Count -ne 1 -or $patterns[0].InnerText -ne $expectedPattern) {
+                            throw "Packaged trade regex differs from tested metadata: $triggerName"
+                        }
                     }
                     $destination = Join-Path $verifyPath $relative
                     New-Item -ItemType Directory -Path ([IO.Path]::GetDirectoryName($destination)) -Force | Out-Null

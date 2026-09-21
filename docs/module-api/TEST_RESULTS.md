@@ -1,5 +1,43 @@
 # Module API verification
 
+## 2026-09-20 Ship-sale wording and cartel customs net receipts
+
+Candidate `f2ce-tools-3.3.0-native-ew39.mpackage`, SHA256
+`df91d1dac79de893a3cf3d0f59e3dbc1d6755a5798902cf8215d585ded9f9b43`.
+
+The reported `75 tons of Libraries sold for 49425ig from your ship` did not match
+the old trigger, which required `sold to the exchange for`. Both forms now
+match, with or without comma-separated amounts and the ship suffix. Native
+verification checks real response strings against source regex metadata and
+compares the compiled package's sale/customs regexes with the tested patterns.
+
+The preceding Candy customs notice pairs with the next active sale receipt:
+49,425ig gross minus 11,430ig customs records 37,995ig net, not gross income.
+Wrapped continuations, blank lines, per-bay capture clearing, idle/buy isolation,
+timeout/new-order cleanup, malformed/mismatched/duplicate notices, and zero net
+are covered. A customs notice alone never acknowledges a sale or renews the
+watchdog. Uncertain accounting stops without replay or advancing a bulk queue.
+
+Full hauling tests exercise three taxed Libraries sales through the real trigger
+bodies, recording 113,985ig and advancing once to the next commodity. A receipt
+before cargo waits for ship GMCP; a preceding price update is retained. Customs
+that makes net revenue below purchase cost records the real proceeds and stops
+with remaining cargo preserved. This does not predict tariffs before a sale or
+remove the current text-receipt dependency: cargo GMCP remains reconciliation,
+not a transaction-specific net-proceeds receipt.
+
+All native suites passed against source and reconstructed packaged Lua, with
+272 syntax checks, 32 metadata checks, and 233 packaged Lua bodies matching
+source. Counted bulk/receipt tests: 16 passed; hauling tests: 75 passed; rotation
+tests: 20 passed. All other native suites and all 535 private FedHauler tests
+passed, including 119 native integration tests. Diff whitespace checks passed.
+
+FedHauler remains 1.17.28. The package retains ew38's purchase-ordering repair,
+the 50-candidate shortlists, saved commodity rotation, and prior Who changes.
+Testing was offline with mocked GMCP and literal live-response fixtures, not a
+live Mudlet/server validation. No profile was installed, no gameplay command was
+sent, and no remote branch or PR was updated.
+
 ## 2026-09-20 Counted purchase receipts independent of GMCP arrival order
 
 Candidate `f2ce-tools-3.3.0-native-ew38.mpackage`, SHA256

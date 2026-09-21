@@ -143,14 +143,14 @@ function f2t_hauling_phase_recovery_sell()
                 return
             end
             local revenue = receipt and tonumber(receipt.revenue)
-            if lots ~= 1 or not revenue or revenue ~= revenue or revenue <= 0 or revenue == math.huge then
+            if lots ~= 1 or not revenue or revenue ~= revenue or revenue < 0 or revenue == math.huge then
                 stop_recovery("Sale receipt is uncertain; no automatic retry.")
                 return
             end
             state.current_commodity_stats.lots_sold = state.current_commodity_stats.lots_sold + 1
             state.current_commodity_stats.total_revenue = state.current_commodity_stats.total_revenue + revenue
             if revenue < floor * 75 then
-                stop_recovery("Bid changed before the server executed the sale; stopping remaining cargo.")
+                stop_recovery("Net sale proceeds fell below purchase cost (price change or customs); stopping remaining cargo.")
                 return
             end
             state.recovery_expected_lots = before - 1

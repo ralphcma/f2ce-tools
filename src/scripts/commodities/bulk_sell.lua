@@ -248,19 +248,67 @@ function f2t_bulk_sell_next()
             string.lower(F2T_BULK_STATE.commodity), F2T_BULK_STATE.remaining)
     end
     F2T_BULK_STATE.sent_command = command
+    F2T_BULK_STATE.sale_customs = nil
     f2t_debug_log("[bulk-sell] Sending counted command: %s", command)
     send(command, false)
     f2t_bulk_watchdog_start()
+end
+
+-- Capture a complete or server-wrapped customs notice for this one receipt.
+-- Never decrement the sale count or renew its watchdog until the sale arrives.
+local function receipt_amount(value)
+    local number = tonumber((tostring(value or ""):gsub(",", "")))
+    if not number or number ~= number or number < 0 or number >= 2^53 or number % 1 ~= 0 then return nil end
+    return number
+end
+
+function f2t_bulk_sell_customs_line(line)
+    local state = F2T_BULK_STATE
+    if not state.active or state.command ~= "sell" or type(line) ~= "string" then return end
+    line = line:gsub("^%s+", ""):gsub("%s+$", "")
+    if line:match("^The .+ cartel deducts ") then
+        if state.sale_customs then
+            f2t_bulk_sell_error("Multiple customs notices before one sale receipt", "invalid_receipt")
+            return
+        end
+        state.sale_customs = {text=""}
+    end
+    local notice = state.sale_customs
+    if not notice or notice.net or line == "" then return end
+    notice.text = (notice.text .. " " .. line):gsub("^%s+", ""):gsub("%s+", " ")
+    local duty, gross, net = notice.text:match(
+        "^The .+ cartel deducts ([%d,]+)ig customs from the ([%d,]+)ig sale proceeds, leaving ([%d,]+)ig net%.$")
+    if duty then
+        duty, gross, net = receipt_amount(duty), receipt_amount(gross), receipt_amount(net)
+        if not duty or not gross or not net or gross == 0 or duty + net ~= gross then
+            f2t_bulk_sell_error("Customs deduction and net proceeds do not reconcile", "invalid_receipt")
+            return
+        end
+        notice.gross, notice.net = gross, net
+    elseif #notice.text > 512 or line:match("net%.$") then
+        f2t_bulk_sell_error("Unrecognized customs receipt", "invalid_receipt")
+    end
 end
 
 -- Handle successful sell
 -- @param commodity: Commodity name from trigger
 -- @param revenue_per_ton: Revenue per ton from trigger
 -- @param revenue_total: Total revenue for this lot from trigger
-function f2t_bulk_sell_success(_commodity, revenue_per_ton, revenue_total)
+function f2t_bulk_sell_success(commodity, revenue_per_ton, revenue_total)
     if not F2T_BULK_STATE.active or F2T_BULK_STATE.command ~= "sell" then
         return
     end
+
+    revenue_total = receipt_amount(revenue_total)
+    local customs = F2T_BULK_STATE.sale_customs
+    if string.lower(tostring(commodity)) ~= string.lower(tostring(F2T_BULK_STATE.commodity))
+        or not revenue_total or (customs and (not customs.net or customs.gross ~= revenue_total)) then
+        f2t_bulk_sell_error("Sale commodity/proceeds do not reconcile with the active order", "invalid_receipt")
+        return
+    end
+    if customs then revenue_total = customs.net end
+    F2T_BULK_STATE.sale_customs = nil
+    revenue_per_ton = math.floor(revenue_total / 75)
 
     f2t_bulk_watchdog_stop()
 
@@ -310,6 +358,7 @@ function f2t_bulk_sell_error(reason, code)
 
     F2T_BULK_STATE.error_reason = reason
     F2T_BULK_STATE.error_code = code
+    F2T_BULK_STATE.sale_customs = nil
     f2t_debug_log("[bulk-sell] ERROR: %s", reason)
 
     -- Only show user feedback in user mode
@@ -318,7 +367,7 @@ function f2t_bulk_sell_error(reason, code)
     end
 
     if F2T_BULK_STATE.commodity_queue then
-        if code == "timeout" then
+        if code == "timeout" or code == "invalid_receipt" then
             -- An unanswered command is uncertain, not permission to send the
             -- next commodity's order from the queue.
             f2t_bulk_sell_finish_all()
@@ -367,6 +416,7 @@ function f2t_bulk_sell_finish()
     F2T_BULK_STATE.error_reason = nil
     F2T_BULK_STATE.error_code = nil
     F2T_BULK_STATE.sell_all_cargo = false
+    F2T_BULK_STATE.sale_customs = nil
     F2T_BULK_STATE.total_cost = 0
     F2T_BULK_STATE.total_revenue = 0
     F2T_BULK_STATE.lots_sold = 0
@@ -415,7 +465,7 @@ function f2t_bulk_sell_finish()
     -- Programmatic mode: call callback with data
     else
         local status = sold > 0 and "success" or "failed"
-        if code == "timeout" then status = "error" end
+        if code == "timeout" or code == "invalid_receipt" then status = "error" end
         callback(commodity, sold, status, reason, code, {revenue=total_revenue})
     end
 end
@@ -456,6 +506,7 @@ function f2t_bulk_sell_finish_all()
     F2T_BULK_STATE.error_reason = nil
     F2T_BULK_STATE.error_code = nil
     F2T_BULK_STATE.sell_all_cargo = false
+    F2T_BULK_STATE.sale_customs = nil
     F2T_BULK_STATE.aggregate_cost = 0
     F2T_BULK_STATE.aggregate_revenue = 0
     F2T_BULK_STATE.aggregate_lots_sold = 0
@@ -509,7 +560,7 @@ function f2t_bulk_sell_finish_all()
     -- Programmatic mode: call callback with data
     else
         local status = total_sold > 0 and "success" or "failed"
-        if code == "timeout" then status = "error" end
+        if code == "timeout" or code == "invalid_receipt" then status = "error" end
         callback(nil, total_sold, status, reason, code)
     end
 end

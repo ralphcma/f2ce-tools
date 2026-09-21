@@ -9,7 +9,15 @@
 > for native Walker or FedHauler 1.16.0. Walker adds a Founder+ tab beside
 > Who/Events/Exchange, with a sortable remote exchange table and bottom controls.
 
-Native candidate **ew38** fixes counted purchases when GMCP runs ahead of text
+Native candidate **ew39** recognizes both ship-sale receipt wordings ("sold for"
+and "sold to the exchange for"). A preceding cartel-customs notice, including
+wrapped continuations, supplies net proceeds for accounting and the cost guard;
+the customs notice alone cannot confirm a sale. Mismatched/incomplete notices
+stop without retry or a gross-as-net fallback. Hauling still reconciles the
+text receipt with ship cargo GMCP before another sale. Source and packaged
+trigger patterns are checked against the reported live wording and legacy forms.
+
+Included from **ew38**: counted purchases when GMCP runs ahead of text
 receipts. A full hold no longer completes a multi-bay buy after its first receipt:
 all requested receipts (or an explicit terminal refusal/error) are required.
 If receipts arrive before cargo GMCP, exchange hauling waits up to five seconds
