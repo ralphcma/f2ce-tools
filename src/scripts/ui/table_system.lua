@@ -6,6 +6,7 @@
 --   f2tTableSetScrollbox(tableId, contentLabel, contentW, rowH, scrollWidget)
 --   f2tTableSetColHdrs(tableId, colHdrs)
 --   f2tTableSetData(tableId, data)
+--   f2tTableRefreshRow(tableId, row)
 --   f2tTableToggleSort(tableId, colKey)
 --   f2tTableOnResize(tableId, newContentW)
 --   f2tTableUpdateScrollboxHeader(tableId, colHdrs)
@@ -84,24 +85,31 @@ function f2tTableSetData(tableId, data)
     if t.scrollbox then f2tTableRenderScrollbox(tableId) end
 end
 
+local function _sortColumn(t)
+    if not t or not t.sort.column then return nil end
+    for _, col in ipairs(t.columns) do
+        if col.key == t.sort.column then return col end
+    end
+    return nil
+end
+
+local function _sortLess(t, colDef, a, b)
+    local va = colDef.sort_value and colDef.sort_value(a) or a[colDef.key]
+    local vb = colDef.sort_value and colDef.sort_value(b) or b[colDef.key]
+    if va == nil and vb == nil then return false end
+    if va == nil then return not t.sort.ascending end
+    if vb == nil then return t.sort.ascending end
+    if type(va) == "string" then va, vb = va:lower(), vb:lower() end
+    if va < vb then return t.sort.ascending end
+    if va > vb then return not t.sort.ascending end
+    return false
+end
+
 local function _sort(tableId)
     local t = _tables[tableId]
-    if not t or not t.sort.column then return end
-    local colDef
-    for _, col in ipairs(t.columns) do
-        if col.key == t.sort.column then colDef = col; break end
-    end
+    local colDef = _sortColumn(t)
     if not colDef then return end
-    local asc = t.sort.ascending
-    table.sort(t.data, function(a, b)
-        local va = colDef.sort_value and colDef.sort_value(a) or a[colDef.key]
-        local vb = colDef.sort_value and colDef.sort_value(b) or b[colDef.key]
-        if va == nil and vb == nil then return false end
-        if va == nil then return not asc end
-        if vb == nil then return asc end
-        if type(va) == "string" then va, vb = va:lower(), vb:lower() end
-        if va < vb then return asc elseif va > vb then return not asc else return false end
-    end)
+    table.sort(t.data, function(a, b) return _sortLess(t, colDef, a, b) end)
 end
 
 function f2tTableToggleSort(tableId, colKey)
@@ -191,6 +199,45 @@ function f2tTableOnResize(tableId, newContentW)
     end
 end
 
+local function _renderRowCells(t, rowLbl, row)
+    for j, col in ipairs(t.columns) do
+        local cell = rowLbl.cells and rowLbl.cells[j]
+        if cell and col.render_label then
+            col.render_label(row[col.key], row, cell, col)
+        elseif cell then
+            cell:echo(tostring(row[col.key] or ""))
+        end
+    end
+end
+
+local function _rowStillSorted(t, index)
+    local colDef = _sortColumn(t)
+    if not colDef then return true end
+    local row = t.data[index]
+    local previous = t.data[index - 1]
+    local following = t.data[index + 1]
+    if previous and _sortLess(t, colDef, row, previous) then return false end
+    if following and _sortLess(t, colDef, following, row) then return false end
+    return true
+end
+
+-- Repaint one existing row without sorting or walking the rest of the table.
+-- False tells the caller to fall back to f2tTableSetData: the row is new,
+-- missing, no longer has a rendered widget, or its new value changes ordering.
+function f2tTableRefreshRow(tableId, row)
+    local t = _tables[tableId]
+    if not t or not t.scrollbox or not row then return false end
+    for index, candidate in ipairs(t.data or {}) do
+        if candidate == row then
+            local rowLbl = t.scrollbox.rows[index]
+            if not rowLbl or not _rowStillSorted(t, index) then return false end
+            _renderRowCells(t, rowLbl, row)
+            return true
+        end
+    end
+    return false
+end
+
 function f2tTableRenderScrollbox(tableId)
     local t = _tables[tableId]
     if not t or not t.scrollbox then return end
@@ -245,14 +292,7 @@ function f2tTableRenderScrollbox(tableId)
         else
             rowLbl:move(0, y); rowLbl:show()
         end
-        for j, col in ipairs(t.columns) do
-            local cell = rowLbl.cells and rowLbl.cells[j]
-            if cell and col.render_label then
-                col.render_label(row[col.key], row, cell, col)
-            elseif cell then
-                cell:echo(tostring(row[col.key] or ""))
-            end
-        end
+        _renderRowCells(t, rowLbl, row)
     end
 
     for i = dataLen + 1, #sb.rows do sb.rows[i]:hide() end

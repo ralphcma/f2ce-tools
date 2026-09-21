@@ -5,7 +5,7 @@
 --
 -- Storage is keyed off f2t_get_char_persistent_dir() (Mudlet table.save/load).
 -- Per-character reload is driven by the "f2tCharacterChanged" event from
--- char.lua. The GMCP players feed (mark-offline -> upsert online -> save) is
+-- char.lua. The GMCP players feed (merge authoritative roster/deltas -> save) is
 -- a global handler owned here, so the DB stays current regardless of which
 -- windows are open.
 --
@@ -86,12 +86,27 @@ end
 
 local function _key(name) return name:lower() end
 
+local function _same_table(a, b)
+    if a == b then return true end
+    if type(a) ~= "table" or type(b) ~= "table" then return false end
+    for k, v in pairs(a) do
+        if b[k] ~= v then return false end
+    end
+    for k in pairs(b) do
+        if a[k] == nil then return false end
+    end
+    return true
+end
+
 -- Upsert a player entry. `entry` must have at least .name; .is_online optional.
+-- Returns true only when consumer-visible data changed.
 function f2t_player_db_upsert(entry)
-    if not entry or not entry.name then return end
+    if not entry or not entry.name then return false end
     local k        = _key(entry.name)
     local now      = os.time()
     local existing = F2T_PLAYER_DB[k]
+    local existed  = existing ~= nil
+    local was_online = existing and existing.is_online or false
     local online   = (entry.is_online ~= nil) and entry.is_online or (existing and existing.is_online) or false
 
     local new_entry = {
@@ -111,22 +126,42 @@ function f2t_player_db_upsert(entry)
         first_seen = existing and existing.first_seen or now,
     }
 
-    local changed = not existing
-        or existing.rank       ~= new_entry.rank
-        or existing.location   ~= new_entry.location
-        or existing.company    ~= new_entry.company
-        or existing.system     ~= new_entry.system
-        or existing.cartel     ~= new_entry.cartel
-        or existing.syndicate  ~= new_entry.syndicate
-        or existing.ship_class ~= new_entry.ship_class
-        or existing.is_online  ~= new_entry.is_online
+    local changed_fields = {}
+    if not existing then
+        changed_fields.new = true
+    else
+        for _, field in ipairs({
+            "name", "rank", "rank_order", "location", "company", "system",
+            "cartel", "syndicate", "ship_class", "staff", "is_online",
+        }) do
+            if existing[field] ~= new_entry[field] then changed_fields[field] = true end
+        end
+        if not _same_table(existing.titles, new_entry.titles) then
+            changed_fields.titles = true
+        end
+    end
+    local changed = next(changed_fields) ~= nil
 
+    -- Keep the entry table stable so UI callbacks and row caches can retain a
+    -- reference to it. Replacing every entry on an authoritative roster made
+    -- otherwise unchanged rows look new to consumers.
+    if existing then
+        for field, value in pairs(new_entry) do existing[field] = value end
+        new_entry = existing
+    end
     F2T_PLAYER_DB[k] = new_entry
     if changed then _dirty = true end
+    if not changed then return false end
+    return true, {
+        key        = k,
+        existed    = existed,
+        was_online = was_online,
+        fields     = changed_fields,
+    }
 end
 
--- Mark every entry offline (called before processing a fresh online list).
--- Does not set dirty; the upsert loop sets it if a status actually changed.
+-- Mark every entry offline on disconnect. The forced disconnect save does not
+-- depend on dirty state, so this helper deliberately leaves _dirty unchanged.
 function f2t_player_db_mark_all_offline()
     for _, e in pairs(F2T_PLAYER_DB) do e.is_online = false end
 end
@@ -163,7 +198,12 @@ function f2t_player_db_reload()
     -- Re-seed from the live gmcp table: the disk snapshot just loaded has no
     -- online status at all, and nothing else will push a fresh gmcp.players
     -- event on a character switch (mirrors the module-load seed below).
-    f2t_player_db_feed_from_gmcp()
+    f2t_player_db_feed_from_gmcp(true)
+    -- Loading replaces the whole database table, so consumers must discard
+    -- row identities even when the live GMCP snapshot matches the disk data.
+    raiseEvent("f2tPlayerDbUpdated", {
+        version = 1, full = true, reason = "reload", players = {},
+    })
     f2t_debug_log("[player_db] reloaded for char %s", F2T_CHAR_NAME or "?")
     raiseEvent("f2tPlayerDbReloaded")
 end
@@ -180,14 +220,28 @@ end
 -- for exactly one player (a location move, rank/company/ship change, etc.)
 -- carrying only the fields that changed -- those get merged onto the
 -- existing record instead of blanking everything else.
-function f2t_player_db_feed_from_gmcp()
-    if not (gmcp and gmcp.players and type(gmcp.players.online) == "table") then return end
+-- Changed feeds raise f2tPlayerDbUpdated with a version-1 payload:
+--   { version=1, full=false, players={ [key]={existed,was_online,fields} } }
+-- Legacy consumers may keep ignoring the extra argument. Reloads use
+-- { version=1, full=true } because loading replaces every row identity.
+function f2t_player_db_feed_from_gmcp(suppress_event)
+    if not (gmcp and gmcp.players and type(gmcp.players.online) == "table") then return false end
+
+    local changed = false
+    local changes = { version = 1, full = false, players = {} }
+
+    local function record_change(did_change, change)
+        if not did_change or not change then return end
+        changed = true
+        changes.players[change.key] = change
+    end
 
     if gmcp.players.count then
-        f2t_player_db_mark_all_offline()
+        local seen = {}
         for _, p in pairs(gmcp.players.online) do
             if type(p) == "table" and p.name then
-                f2t_player_db_upsert({
+                seen[_key(p.name)] = true
+                record_change(f2t_player_db_upsert({
                     name       = p.name,
                     rank       = p.rank or "",
                     rank_order = f2t_get_rank_level(p.rank) or 0,
@@ -200,13 +254,29 @@ function f2t_player_db_feed_from_gmcp()
                     staff      = p.staff_role or "",
                     titles     = p.titles or {},
                     is_online  = true,
-                })
+                }))
+            end
+        end
+        -- Mark only players omitted from the authoritative roster offline.
+        -- Marking everyone first made every unchanged online player look like
+        -- a fresh status transition when it was immediately upserted again.
+        for key, entry in pairs(F2T_PLAYER_DB) do
+            if entry.is_online and not seen[key] then
+                entry.is_online = false
+                _dirty = true
+                changed = true
+                changes.players[key] = {
+                    key        = key,
+                    existed    = true,
+                    was_online = true,
+                    fields     = { is_online = true },
+                }
             end
         end
     else
         for name, p in pairs(gmcp.players.online) do
             if type(p) == "table" then
-                f2t_player_db_upsert({
+                record_change(f2t_player_db_upsert({
                     name       = p.name or name,
                     rank       = p.rank,
                     rank_order = p.rank and f2t_get_rank_level(p.rank) or nil,
@@ -219,13 +289,15 @@ function f2t_player_db_feed_from_gmcp()
                     staff      = p.staff_role,
                     titles     = p.titles,
                     is_online  = true,
-                })
+                }))
             end
         end
     end
 
+    if not changed then return false end
     f2t_player_db_save_debounced()
-    raiseEvent("f2tPlayerDbUpdated")
+    if suppress_event ~= true then raiseEvent("f2tPlayerDbUpdated", changes) end
+    return true, changes
 end
 
 registerAnonymousEventHandler("gmcp.players", "f2t_player_db_feed_from_gmcp")

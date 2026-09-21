@@ -1,5 +1,43 @@
 # Module API verification
 
+## 2026-09-20 Incremental Who refresh integrated with native services
+
+Candidate `f2ce-tools-3.3.0-native-ew37.mpackage`, SHA256
+`00a6234290e32564d467abe73fb8d99a0fc2cfd9275b0d51d3314e2df445e214`.
+
+Integrated the six-file Who/player-DB/table change from local commits `2bc5bf6`
+and `a3c4508` on `fix/who-refresh-churn`, originally based on official upstream
+`044b937`. The original branch was not modified or published. This candidate
+retains all native ew36 services and hauling changes; it is not a replacement
+with the upstream-only Who package. FedHauler remains 1.17.28 with no source or
+package changes required for this integration.
+
+Unchanged player feeds no longer notify UI consumers. Database row references
+remain stable, Who caches unchanged cell writes and coalesces changed-player
+payloads, and the shared table supports an in-place row refresh when membership
+and sorting permit it. Legacy/full events, visibility/order changes and failed
+row refreshes keep the full-refresh path. The event's extra version-1 payload
+is optional for existing consumers.
+
+Integration hardening validates the complete change payload before merging any
+rows. Missing or wrong-type players/fields, mismatched keys, invalid flags and
+unknown versions request a full refresh rather than throwing before a timer is
+scheduled. A malformed delta coalesced with a valid one promotes the whole batch
+to a full refresh. No additional optional performance optimizations were added.
+
+All native suites passed against source and reconstructed packaged Lua, including
+the three imported Who/player-DB/table suites and added malformed-event tests.
+There were 270 Lua syntax checks, 32 metadata checks, and 231 packaged Lua bodies
+matching source. Table tests additionally verify that Exchange Walker's custom
+active/inactive header styles and growing/shrinking viewport heights survive.
+All 535 private FedHauler tests passed against this native tree, including the
+119 native integration tests. Diff whitespace checks passed.
+
+Validation was offline. No live Mudlet profile was installed or exercised, no
+gameplay commands were sent, and no remote branch or PR was updated. The prior
+Who branch's web stress results were supplied as background evidence; that
+browser performance benchmark was not rerun on this combined package.
+
 ## 2026-09-20 Durable commodity rotation and guarded normal sales
 
 Candidate `f2ce-tools-3.3.0-native-ew36.mpackage`, SHA256

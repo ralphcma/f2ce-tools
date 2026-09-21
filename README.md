@@ -9,7 +9,15 @@
 > for native Walker or FedHauler 1.16.0. Walker adds a Founder+ tab beside
 > Who/Events/Exchange, with a sortable remote exchange table and bottom controls.
 
-Native candidate **ew36** adds a saved, per-profile **67-commodity rotation**:
+Native candidate **ew37** integrates the incremental Who-tab updates from local
+commits `2bc5bf6` and `a3c4508`: unchanged player feeds do not refresh consumers,
+changed player rows are updated in place where safe, and repeated updates are
+coalesced. Membership/sort changes and legacy or malformed events fall back to
+a full refresh. Exchange Walker's custom table headers and viewport resizing
+remain intact. This combined native package retains the API, Walker, company,
+navigation and hauling work; it is not the standalone upstream-based Who build.
+
+Included from **ew36**: a saved, per-profile **67-commodity rotation**:
 one load/attempt per commodity before starting another round. Every full market
 review considers the complete bundled catalog, skips unavailable/unprofitable
 or excluded goods, and queues all remaining candidates rather than the top five.

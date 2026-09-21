@@ -1,5 +1,6 @@
 -- Reads from F2T_PLAYER_DB (player_db.lua), kept current by the always-on
--- GMCP handler. Refreshes all open panes on f2tPlayerDbUpdated.
+-- GMCP handler. Applies keyed row changes from f2tPlayerDbUpdated when safe,
+-- with a full refresh fallback for membership/order changes and legacy events.
 --
 -- Layout per pane:
 --   H_HDR px  - header strip: online count + Online/All toggle button
@@ -58,18 +59,68 @@ local function onlineCount()
     return n
 end
 
+-- Rendering a table cell crosses from Lua into Geyser (and, on the web client,
+-- into JavaScript/React). A single-player GMCP delta still walks the sorted
+-- table, but unchanged cells should not repeat their HTML, tooltip, and callback
+-- writes. The row reference is stable in player_db.lua, so callbacks continue to
+-- see current data without being replaced when another field changes.
+local function renderCellIfChanged(cell, row, signature, render)
+    if cell._f2tWhoRow == row and cell._f2tWhoSignature == signature then return end
+    render()
+    cell._f2tWhoRow = row
+    cell._f2tWhoSignature = signature
+end
+
+local function refreshHeader(inst)
+    local count = onlineCount()
+    if inst.hdrCount and inst.onlineCount ~= count then
+        inst.hdrCount:echo(string.format("  👥  Online: %d", count))
+        inst.onlineCount = count
+    end
+end
+
 local function refreshInstance(gid)
     local inst = instances[gid]
     if not inst then return end
-    if inst.hdrCount then
-        inst.hdrCount:echo(string.format("  👥  Online: %d", onlineCount()))
-    end
+    refreshHeader(inst)
     f2tTableSetData(inst.tableId, buildTableData(inst.showAll))
+end
+
+local function refreshInstanceChanges(gid, changes)
+    local inst = instances[gid]
+    if not inst then return end
+    refreshHeader(inst)
+    for key, change in pairs(changes.players or {}) do
+        local row = F2T_PLAYER_DB and F2T_PLAYER_DB[key] or nil
+        local wasVisible = change.existed and (inst.showAll or change.was_online) or false
+        local isVisible = row ~= nil and (inst.showAll or row.is_online) or false
+        if wasVisible ~= isVisible then
+            refreshInstance(gid)
+            return
+        end
+        if isVisible then
+            local ok, refreshed = false, false
+            if f2tTableRefreshRow then
+                ok, refreshed = pcall(f2tTableRefreshRow, inst.tableId, row)
+            end
+            if not ok or not refreshed then
+                refreshInstance(gid)
+                return
+            end
+        end
+    end
 end
 
 local function refreshAll()
     for gid in pairs(instances) do
         pcall(refreshInstance, gid)
+    end
+    if f2tPlayerCardsRefreshAll then f2tPlayerCardsRefreshAll() end
+end
+
+local function refreshChanged(changes)
+    for gid in pairs(instances) do
+        pcall(refreshInstanceChanges, gid, changes)
     end
     if f2tPlayerCardsRefreshAll then f2tPlayerCardsRefreshAll() end
 end
@@ -85,14 +136,17 @@ local function buildCols()
             scrollbox_pct = 30,
             render_label  = function(v, row, cell)
                 local rc = rankColor(row)
-                cell:echo(string.format(
-                    "<span style='%scolor:%s;'>%s</span>",
-                    CELL_FONT, rc, v or ""))
-                if row.is_online == false and row.last_seen then
-                    cell:setToolTip("Last seen " .. f2t_player_db_last_seen_str(row.last_seen))
-                end
-                cell:setClickCallback(function()
-                    if f2tPlayerCardShowOrRaise then f2tPlayerCardShowOrRaise(row) end
+                local tooltip = (row.is_online == false and row.last_seen)
+                    and ("Last seen " .. f2t_player_db_last_seen_str(row.last_seen)) or ""
+                local signature = table.concat({ tostring(v or ""), rc, tooltip }, "\31")
+                renderCellIfChanged(cell, row, signature, function()
+                    cell:echo(string.format(
+                        "<span style='%scolor:%s;'>%s</span>",
+                        CELL_FONT, rc, v or ""))
+                    cell:setToolTip(tooltip)
+                    cell:setClickCallback(function()
+                        if f2tPlayerCardShowOrRaise then f2tPlayerCardShowOrRaise(row) end
+                    end)
                 end)
             end,
         },
@@ -108,12 +162,15 @@ local function buildCols()
                     and string.format("<span style='%scolor:#ffff55;'> [%s]</span>",
                         CELL_FONT, row.staff:sub(1, 3))
                     or ""
-                cell:echo(string.format(
-                    "<span style='%scolor:%s;'><b>%s</b></span>%s",
-                    CELL_FONT, rc, v or "", staffSfx))
-                cell:setToolTip("Click to view player card")
-                cell:setClickCallback(function()
-                    if f2tPlayerCardShowOrRaise then f2tPlayerCardShowOrRaise(row) end
+                local signature = table.concat({ tostring(v or ""), rc, staffSfx }, "\31")
+                renderCellIfChanged(cell, row, signature, function()
+                    cell:echo(string.format(
+                        "<span style='%scolor:%s;'><b>%s</b></span>%s",
+                        CELL_FONT, rc, v or "", staffSfx))
+                    cell:setToolTip("Click to view player card")
+                    cell:setClickCallback(function()
+                        if f2tPlayerCardShowOrRaise then f2tPlayerCardShowOrRaise(row) end
+                    end)
                 end)
             end,
         },
@@ -123,23 +180,34 @@ local function buildCols()
             sortable      = true,
             scrollbox_pct = 32,
             render_label  = function(v, row, cell)
-                if not v or v == "" then return end
+                v = v or ""
                 local lcc    = (row.is_online == false) and RC_OFFLINE or "#00cccc"
-                cell:echo(string.format(
-                    "<span style='%scolor:%s;'>%s</span>",
-                    CELL_FONT, lcc, v))
-                local locSys = v:match("^(.+) Space$")
-                cell:setClickCallback(function()
-                    if locSys then expandAlias("nav " .. locSys .. " link")
-                    else            expandAlias("nav " .. v) end
-                end)
+                local locSys = v ~= "" and v:match("^(.+) Space$") or nil
                 local dest = locSys or v
+                local tooltip = ""
                 if row.is_online == false and row.last_seen then
-                    cell:setToolTip(f2t_player_db_last_seen_str(row.last_seen) ..
-                        " — navigate to " .. dest)
-                else
-                    cell:setToolTip("Navigate to " .. dest)
+                    tooltip = f2t_player_db_last_seen_str(row.last_seen) ..
+                        " — navigate to " .. dest
+                elseif v ~= "" then
+                    tooltip = "Navigate to " .. dest
                 end
+                local signature = table.concat({ v, lcc, tooltip }, "\31")
+                renderCellIfChanged(cell, row, signature, function()
+                    if v == "" then
+                        cell:echo("")
+                        cell:setToolTip("")
+                        cell:setClickCallback(function() end)
+                        return
+                    end
+                    cell:echo(string.format(
+                        "<span style='%scolor:%s;'>%s</span>",
+                        CELL_FONT, lcc, v))
+                    cell:setToolTip(tooltip)
+                    cell:setClickCallback(function()
+                        if locSys then expandAlias("nav " .. locSys .. " link")
+                        else            expandAlias("nav " .. v) end
+                    end)
+                end)
             end,
         },
     }
@@ -346,11 +414,56 @@ table.insert(F2T_CONTENT_REGISTRARS, f2tRegisterWho)
 -- many players online. One repaint per 0.2s window keeps the list effectively
 -- realtime at a fraction of the render cost.
 local _refreshTimer = nil
-registerAnonymousEventHandler("f2tPlayerDbUpdated", function()
+local _pendingChanges = { version = 1, full = false, players = {} }
+
+-- Other consumers can raise legacy or malformed events. Validate the whole
+-- batch before merging it so a bad nested value cannot lose a scheduled paint.
+local function validChanges(changes)
+    if type(changes) ~= "table" or changes.version ~= 1 or changes.full ~= false
+        or type(changes.players) ~= "table" then return false end
+    for key, change in pairs(changes.players) do
+        if type(key) ~= "string" or key == "" or type(change) ~= "table"
+            or (change.key ~= nil and change.key ~= key)
+            or type(change.existed) ~= "boolean" or type(change.was_online) ~= "boolean"
+            or type(change.fields) ~= "table" then return false end
+        for field, changed in pairs(change.fields) do
+            if type(field) ~= "string" or changed ~= true then return false end
+        end
+    end
+    return true
+end
+
+local function mergePendingChanges(changes)
+    if not validChanges(changes) then
+        _pendingChanges = { version = 1, full = true, players = {} }
+        return
+    end
+    if _pendingChanges.full then return end
+    for key, change in pairs(changes.players or {}) do
+        local pending = _pendingChanges.players[key]
+        if not pending then
+            pending = {
+                key        = key,
+                existed    = change.existed,
+                was_online = change.was_online,
+                fields     = {},
+            }
+            _pendingChanges.players[key] = pending
+        end
+        for field in pairs(change.fields or {}) do pending.fields[field] = true end
+    end
+end
+
+registerAnonymousEventHandler("f2tPlayerDbUpdated", function(event_or_changes, event_changes)
+    local changes = type(event_changes) == "table" and event_changes
+        or (type(event_or_changes) == "table" and event_or_changes or nil)
+    mergePendingChanges(changes)
     if _refreshTimer then return end
     _refreshTimer = tempTimer(0.2, function()
         _refreshTimer = nil
-        refreshAll()
+        local pending = _pendingChanges
+        _pendingChanges = { version = 1, full = false, players = {} }
+        if pending.full then refreshAll() else refreshChanged(pending) end
     end)
 end)
 
