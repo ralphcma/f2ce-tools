@@ -1,5 +1,6 @@
 -- Reads from F2T_PLAYER_DB (player_db.lua), kept current by the always-on
--- GMCP handler. Refreshes all open panes on f2tPlayerDbUpdated.
+-- GMCP handler. Applies keyed row changes from f2tPlayerDbUpdated when safe,
+-- with a full refresh fallback for membership/order changes and legacy events.
 --
 -- Layout per pane:
 --   H_HDR px  - header strip: online count + Online/All toggle button
@@ -70,20 +71,56 @@ local function renderCellIfChanged(cell, row, signature, render)
     cell._f2tWhoSignature = signature
 end
 
-local function refreshInstance(gid)
-    local inst = instances[gid]
-    if not inst then return end
+local function refreshHeader(inst)
     local count = onlineCount()
     if inst.hdrCount and inst.onlineCount ~= count then
         inst.hdrCount:echo(string.format("  👥  Online: %d", count))
         inst.onlineCount = count
     end
+end
+
+local function refreshInstance(gid)
+    local inst = instances[gid]
+    if not inst then return end
+    refreshHeader(inst)
     f2tTableSetData(inst.tableId, buildTableData(inst.showAll))
+end
+
+local function refreshInstanceChanges(gid, changes)
+    local inst = instances[gid]
+    if not inst then return end
+    refreshHeader(inst)
+    for key, change in pairs(changes.players or {}) do
+        local row = F2T_PLAYER_DB and F2T_PLAYER_DB[key] or nil
+        local wasVisible = change.existed and (inst.showAll or change.was_online) or false
+        local isVisible = row ~= nil and (inst.showAll or row.is_online) or false
+        if wasVisible ~= isVisible then
+            refreshInstance(gid)
+            return
+        end
+        if isVisible then
+            local ok, refreshed = false, false
+            if f2tTableRefreshRow then
+                ok, refreshed = pcall(f2tTableRefreshRow, inst.tableId, row)
+            end
+            if not ok or not refreshed then
+                refreshInstance(gid)
+                return
+            end
+        end
+    end
 end
 
 local function refreshAll()
     for gid in pairs(instances) do
         pcall(refreshInstance, gid)
+    end
+    if f2tPlayerCardsRefreshAll then f2tPlayerCardsRefreshAll() end
+end
+
+local function refreshChanged(changes)
+    for gid in pairs(instances) do
+        pcall(refreshInstanceChanges, gid, changes)
     end
     if f2tPlayerCardsRefreshAll then f2tPlayerCardsRefreshAll() end
 end
@@ -377,11 +414,39 @@ table.insert(F2T_CONTENT_REGISTRARS, f2tRegisterWho)
 -- many players online. One repaint per 0.2s window keeps the list effectively
 -- realtime at a fraction of the render cost.
 local _refreshTimer = nil
-registerAnonymousEventHandler("f2tPlayerDbUpdated", function()
+local _pendingChanges = { version = 1, full = false, players = {} }
+
+local function mergePendingChanges(changes)
+    if type(changes) ~= "table" or changes.version ~= 1 or changes.full then
+        _pendingChanges = { version = 1, full = true, players = {} }
+        return
+    end
+    if _pendingChanges.full then return end
+    for key, change in pairs(changes.players or {}) do
+        local pending = _pendingChanges.players[key]
+        if not pending then
+            pending = {
+                key        = key,
+                existed    = change.existed,
+                was_online = change.was_online,
+                fields     = {},
+            }
+            _pendingChanges.players[key] = pending
+        end
+        for field in pairs(change.fields or {}) do pending.fields[field] = true end
+    end
+end
+
+registerAnonymousEventHandler("f2tPlayerDbUpdated", function(event_or_changes, event_changes)
+    local changes = type(event_changes) == "table" and event_changes
+        or (type(event_or_changes) == "table" and event_or_changes or nil)
+    mergePendingChanges(changes)
     if _refreshTimer then return end
     _refreshTimer = tempTimer(0.2, function()
         _refreshTimer = nil
-        refreshAll()
+        local pending = _pendingChanges
+        _pendingChanges = { version = 1, full = false, players = {} }
+        if pending.full then refreshAll() else refreshChanged(pending) end
     end)
 end)
 

@@ -2,6 +2,11 @@ local repo = arg[1] or "."
 
 local captured_def = nil
 local captured_columns = nil
+local event_handlers = {}
+local timers = {}
+local set_data_count = 0
+local refresh_row_count = 0
+local refresh_row_result = true
 
 local function assert_equal(actual, expected, label)
     if actual ~= expected then
@@ -59,13 +64,24 @@ function f2t_rank_color_hex() return "#abcdef" end
 function f2t_player_db_get_offline() return {} end
 function f2t_player_db_last_seen_str() return "1m ago" end
 function f2t_debug_log() end
-function registerAnonymousEventHandler() return 1 end
-function tempTimer() return 1 end
+function registerAnonymousEventHandler(name, callback)
+    event_handlers[name] = callback
+    return 1
+end
+function tempTimer(delay, callback)
+    timers[#timers + 1] = { delay = delay, callback = callback }
+    return #timers
+end
 function expandAlias() end
 function f2tTableCreate(_, columns) captured_columns = columns end
 function f2tTableSetScrollbox() end
 function f2tTableSetColHdrs() end
-function f2tTableSetData() end
+function f2tTableSetData() set_data_count = set_data_count + 1 end
+function f2tTableRefreshRow(_, row)
+    refresh_row_count = refresh_row_count + 1
+    assert_equal(row, F2T_PLAYER_DB.alice, "incremental refresh receives changed row")
+    return refresh_row_result
+end
 function f2tTableToggleSort() end
 function f2tTableDestroy() end
 function f2tTableOnResize() end
@@ -132,5 +148,74 @@ local replacement = {
 captured_columns[2].render_label(replacement.name, replacement, name_cell)
 assert_equal(name_cell.echo_count, 2, "row replacement rewrites cell")
 assert_equal(name_cell.callback_count, 2, "row replacement refreshes callback")
+
+local function run_refresh_timer()
+    local timer = table.remove(timers, 1)
+    assert_equal(timer.delay, 0.2, "Who refresh remains coalesced")
+    timer.callback()
+end
+
+local function reset_refresh_counts()
+    set_data_count = 0
+    refresh_row_count = 0
+    refresh_row_result = true
+end
+
+row.location = "Sol Space"
+row.is_online = true
+F2T_PLAYER_DB.alice = row
+reset_refresh_counts()
+event_handlers.f2tPlayerDbUpdated("f2tPlayerDbUpdated", {
+    version = 1,
+    full = false,
+    players = {
+        alice = {
+            key = "alice", existed = true, was_online = true,
+            fields = { location = true },
+        },
+    },
+})
+run_refresh_timer()
+assert_equal(refresh_row_count, 1, "delta refreshes one existing row")
+assert_equal(set_data_count, 0, "delta avoids a full table refresh")
+
+reset_refresh_counts()
+event_handlers.f2tPlayerDbUpdated("f2tPlayerDbUpdated", {
+    version = 1, full = false,
+    players = { alice = { existed = true, was_online = true, fields = { location = true } } },
+})
+event_handlers.f2tPlayerDbUpdated("f2tPlayerDbUpdated", {
+    version = 1, full = false,
+    players = { alice = { existed = true, was_online = true, fields = { company = true } } },
+})
+assert_equal(#timers, 1, "multiple deltas share one refresh timer")
+run_refresh_timer()
+assert_equal(refresh_row_count, 1, "coalesced player deltas refresh one row")
+
+reset_refresh_counts()
+row.is_online = false
+event_handlers.f2tPlayerDbUpdated("f2tPlayerDbUpdated", {
+    version = 1, full = false,
+    players = { alice = { existed = true, was_online = true, fields = { is_online = true } } },
+})
+run_refresh_timer()
+assert_equal(refresh_row_count, 0, "membership change skips row-only refresh")
+assert_equal(set_data_count, 1, "membership change rebuilds the table")
+
+reset_refresh_counts()
+row.is_online = true
+event_handlers.f2tPlayerDbUpdated("f2tPlayerDbUpdated")
+run_refresh_timer()
+assert_equal(set_data_count, 1, "legacy event rebuilds the table")
+
+reset_refresh_counts()
+refresh_row_result = false
+event_handlers.f2tPlayerDbUpdated("f2tPlayerDbUpdated", {
+    version = 1, full = false,
+    players = { alice = { existed = true, was_online = true, fields = { name = true } } },
+})
+run_refresh_timer()
+assert_equal(refresh_row_count, 1, "row refresh is attempted before sort fallback")
+assert_equal(set_data_count, 1, "sort fallback rebuilds the table")
 
 print("who render cache: ok")

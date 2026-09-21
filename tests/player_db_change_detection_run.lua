@@ -20,9 +20,16 @@ end
 local function event_count(name)
     local count = 0
     for _, event in ipairs(events) do
-        if event == name then count = count + 1 end
+        if event.name == name then count = count + 1 end
     end
     return count
+end
+
+local function last_event_payload(name)
+    for index = #events, 1, -1 do
+        if events[index].name == name then return events[index].args[1] end
+    end
+    return nil
 end
 
 function f2t_get_char_persistent_dir() return repo .. "/tests/tmp" end
@@ -30,7 +37,9 @@ function f2t_get_rank_level(rank) return rank == "Trader" and 5 or 0 end
 function f2t_debug_log() end
 function registerAnonymousEventHandler() return 1 end
 function killTimer() end
-function raiseEvent(name) events[#events + 1] = name end
+function raiseEvent(name, ...)
+    events[#events + 1] = { name = name, args = { ... } }
+end
 function tempTimer(delay, callback)
     timers[#timers + 1] = { delay = delay, callback = callback }
     return #timers
@@ -74,6 +83,12 @@ gmcp.players.online.Alice.location = "Sol Space"
 assert_equal(f2t_player_db_feed_from_gmcp(), true, "location delta reports a change")
 assert_equal(event_count("f2tPlayerDbUpdated"), 2, "location delta raises an update")
 assert_equal(F2T_PLAYER_DB.alice, alice_entry, "changed delta preserves entry identity")
+local location_change = last_event_payload("f2tPlayerDbUpdated")
+assert_equal(location_change.version, 1, "change metadata is versioned")
+assert_equal(location_change.full, false, "delta metadata is incremental")
+assert_equal(location_change.players.alice.existed, true, "delta records existing row")
+assert_equal(location_change.players.alice.was_online, true, "delta records old visibility")
+assert_equal(location_change.players.alice.fields.location, true, "delta identifies changed field")
 
 gmcp.players.online.Alice.titles = { "Founder" }
 assert_equal(f2t_player_db_feed_from_gmcp(), false, "equal title values are ignored")
@@ -105,6 +120,9 @@ gmcp.players = {
 }
 assert_equal(f2t_player_db_feed_from_gmcp(), true, "missing roster player reports a change")
 assert_equal(F2T_PLAYER_DB.bob.is_online, false, "missing roster player is marked offline")
+local roster_change = last_event_payload("f2tPlayerDbUpdated")
+assert_equal(roster_change.players.bob.fields.is_online, true,
+    "authoritative omission reports online-state change")
 assert_equal(f2t_player_db_feed_from_gmcp(), false, "repeated reduced roster is ignored")
 
 load_fixture = copy_table(F2T_PLAYER_DB)
@@ -112,6 +130,8 @@ local updates_before_reload = event_count("f2tPlayerDbUpdated")
 f2t_player_db_reload()
 assert_equal(event_count("f2tPlayerDbUpdated"), updates_before_reload + 1,
     "character reload forces exactly one consumer refresh")
+assert_equal(last_event_payload("f2tPlayerDbUpdated").full, true,
+    "character reload requests a full consumer refresh")
 assert_equal(event_count("f2tPlayerDbReloaded"), 1, "character reload event is preserved")
 
 local save_timer_count = 0
