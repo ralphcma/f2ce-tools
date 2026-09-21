@@ -78,6 +78,7 @@ try {
             @('tests/api/native_adapter_run.lua', "$SourceRoot/src/scripts/api/v1.lua", "$SourceRoot/src/scripts/api/adapter.lua"),
             @('tests/exchange_walker/run.lua', $SourceRoot),
             @('tests/commodities/bulk_counted_run.lua', $SourceRoot),
+            @('tests/commodities/catalog_run.lua', $SourceRoot),
             @('tests/hauling/refusal_run.lua', $SourceRoot),
             @('tests/hauling/rotation_run.lua', $SourceRoot),
             @('tests/player_db_change_detection_run.lua', $SourceRoot),
@@ -161,6 +162,14 @@ try {
                 }
             }
             Write-Output "PACKAGED_SCRIPTS=$matched matched (init has the intended dependency injection)"
+            $reader = [IO.StreamReader]::new($archive.GetEntry('commodities.json').Open())
+            try { $catalogText = $reader.ReadToEnd() } finally { $reader.Dispose() }
+            $catalogSource = [IO.File]::ReadAllText((Join-Path $repoPath 'src/resources/commodities.json'))
+            if ($catalogText.Replace("`r`n", "`n").TrimEnd() -ne $catalogSource.Replace("`r`n", "`n").TrimEnd()) {
+                throw 'Packaged base-price catalog differs from tested source'
+            }
+            New-Item -ItemType Directory -Path (Join-Path $verifyPath 'src/resources') -Force | Out-Null
+            [IO.File]::WriteAllText((Join-Path $verifyPath 'src/resources/commodities.json'), $catalogText, [Text.UTF8Encoding]::new($false))
             foreach ($required in @('EXCHANGE-WALKER-LICENSE.txt', 'F2CE-LICENSE.txt', 'full.lua')) {
                 if (-not $archive.GetEntry($required)) { throw "Package is missing $required" }
             }

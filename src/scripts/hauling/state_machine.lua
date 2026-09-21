@@ -3,7 +3,7 @@
 
 -- Start hauling automation
 --- @param requested_mode string|nil Optional mode override (e.g., "exchange" to force exchange mode for Founder+)
-function f2t_hauling_start(requested_mode)
+function f2t_hauling_start(requested_mode, rotation)
     if F2T_HAULING_STATE.active then
         cecho("\n<yellow>[hauling]<reset> Hauling already active\n")
         return
@@ -27,6 +27,7 @@ function f2t_hauling_start(requested_mode)
     F2T_HAULING_STATE.stopping = false
     F2T_HAULING_STATE.cycle_count = 0
     F2T_HAULING_STATE.exchange_analysis_request = nil
+    F2T_HAULING_STATE.rotation = rotation -- session-local; ordinary starts clear it
     raiseEvent("f2tHaulingStatusChanged")
 
     -- Set navigation ownership for hauling

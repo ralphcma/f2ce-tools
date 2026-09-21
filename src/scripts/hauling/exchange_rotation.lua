@@ -67,13 +67,21 @@ local function save(data)
     return true
 end
 
--- Only a complete catalog review can roll the round over. Unavailable and
+function f2t_hauling_rotation_catalog()
+    if F2T_HAULING_STATE.rotation == "top_base_21" then
+        return f2t_get_highest_base_commodities(21)
+    end
+    return f2t_get_all_commodities()
+end
+
+-- Only a complete selected catalog review can roll the round over. Unavailable and
 -- excluded commodities count as reviewed; they never force an unsafe purchase.
 function f2t_hauling_rotation_queue(results, excluded)
     if type(results) ~= "table" then return nil, "Missing commodity review" end
     local data, err = load()
     if not data then return nil, err end
-    local catalog = f2t_get_all_commodities()
+    local catalog, catalog_error = f2t_hauling_rotation_catalog()
+    if not catalog then return nil, catalog_error end
     if #catalog == 0 then return nil, "Commodity catalog unavailable" end
     local by_name, eligible = {}, {}
     for _, row in ipairs(results) do
@@ -125,7 +133,9 @@ end
 function f2t_hauling_rotation_status()
     local data, err = load()
     if not data then cecho("\n<red>[hauling]<reset> " .. err .. "\n"); return end
-    local catalog, count = f2t_get_all_commodities(), 0
+    local catalog, catalog_error = f2t_hauling_rotation_catalog()
+    if not catalog then cecho("\n<red>[hauling]<reset> " .. catalog_error .. "\n"); return end
+    local count = 0
     for _, name in ipairs(catalog) do if data.done[name:lower()] then count = count + 1 end end
     cecho(string.format("\n<green>[hauling]<reset> Commodity rotation %d: %d/%d reviewed or attempted. " ..
         "Saved per profile; one load per attempt. Loading never starts automation.\n", data.round, count, #catalog))

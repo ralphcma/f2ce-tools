@@ -98,7 +98,7 @@ end
 
 -- Get price data for all commodities (programmatic use)
 -- callback: function(results) called when complete with array of analysis data
-function f2t_price_get_all_data(callback)
+function f2t_price_get_all_data(callback, selected)
     -- Check prerequisites before starting
     if not f2t_check_rank_requirement("Merchant", "Price checking") then return false end
     if not f2t_check_tool_requirement("remote-access-cert", "Price checking", "Remote Price Check Service") then
@@ -114,6 +114,20 @@ function f2t_price_get_all_data(callback)
     local commodities = load_commodities_list()
     if not commodities then
         return false
+    end
+
+    -- Optional session-local selection; manual "price all" and other callers
+    -- keep their full catalog. Copy it so callers cannot alter a running scan.
+    if selected ~= nil then
+        if type(selected) ~= "table" or #selected == 0 then return false end
+        local known, seen, subset = {}, {}, {}
+        for _, name in ipairs(commodities) do known[name] = true end
+        for _, name in ipairs(selected) do
+            name = type(name) == "string" and name:lower()
+            if not name or not known[name] or seen[name] then return false end
+            seen[name] = true; subset[#subset+1] = name
+        end
+        commodities = subset
     end
 
     -- Initialize state

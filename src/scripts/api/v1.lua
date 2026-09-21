@@ -943,6 +943,12 @@ function hauling.start(context, options)
     if mode ~= "auto" and mode ~= "exchange" then
         return nil, api_error("E_HAUL_MODE", "only rank-aware auto and exchange override are stable API modes")
     end
+    if options.rotation ~= nil and (options.rotation ~= "top_base_21" or mode ~= "exchange") then
+        return nil, api_error("E_HAUL_ROTATION", "top_base_21 is an exchange-only rotation")
+    end
+    if options.rotation and not API.hasCapability("hauling.rotation_top_base21") then
+        return nil, api_error("E_CAPABILITY", "top-base-price rotation is unavailable")
+    end
     if hauling._owner then
         return nil, api_error("E_HAUL_BUSY", "hauling is already API-owned", { owner = hauling._owner })
     end
@@ -957,7 +963,7 @@ function hauling.start(context, options)
         return nil, api_error("E_CAPABILITY", "hauling adapter unavailable")
     end
     hauling._owner, hauling._command_lease = context.module_id, command_lease
-    local call_ok, accepted, detail = pcall(API._adapter.haulingStart, mode == "exchange" and "exchange" or nil)
+    local call_ok, accepted, detail = pcall(API._adapter.haulingStart, mode == "exchange" and "exchange" or nil, options.rotation)
     if not call_ok or accepted ~= true then
         hauling._owner = nil; command_lease:release("start_rejected"); hauling._command_lease = nil
         return nil, api_error("E_HAUL_START", call_ok and (detail or "hauling start rejected") or tostring(accepted))
@@ -1028,6 +1034,7 @@ function API._install(adapter)
     capability("prices.provider_builtin", type(adapter.priceCheck) == "function", adapter.name)
     capability("hauling", type(adapter.haulingStart) == "function", adapter.name)
     capability("hauling.exchange_override", type(adapter.haulingStart) == "function", adapter.name)
+    capability("hauling.rotation_top_base21", adapter.haulingTopBase21 == true, "session-local top 21 fixed base prices")
     capability("map.queries", type(adapter.mapResolve) == "function", adapter.name)
     capability("exchange.capture", type(adapter.exchangeCapture) == "function"
         and type(adapter.exchangeCancel) == "function", "serialized native PO capture")

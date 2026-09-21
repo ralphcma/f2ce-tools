@@ -153,6 +153,17 @@ end
 function f2t_hauling_phase_analyze()
     local state, request = F2T_HAULING_STATE, {}
     state.exchange_analysis_request = request
+    local selected
+    if state.rotation == "top_base_21" then
+        local err
+        selected, err = f2t_hauling_rotation_catalog()
+        if not selected then
+            cecho("\n<red>[hauling]<reset> " .. tostring(err) .. " No travel or purchase started.\n")
+            f2t_hauling_do_stop()
+            return
+        end
+        cecho("\n<green>[hauling]<reset> Premium rotation: 21 highest base-price commodities.\n")
+    end
     f2t_debug_log("[hauling] Phase: Analyzing commodities")
     cecho("\n<green>[hauling]<reset> Analyzing commodity prices (this may take a minute)...\n")
 
@@ -199,7 +210,7 @@ function f2t_hauling_phase_analyze()
             "after reviewing all %d; one load each.\n", round, count, catalog_count))
 
         f2t_hauling_next_commodity()
-    end)
+    end, selected)
 end
 
 -- Move to next commodity in queue

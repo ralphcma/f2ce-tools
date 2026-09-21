@@ -33,6 +33,7 @@ local function load_commodities()
     -- short_to_canonical: lowercase short name -> canonical name
     local name_to_canonical = {}
     local short_to_canonical = {}
+    local base_prices = {}
 
     for _, group in ipairs(data.groups) do
         for _, commodity in ipairs(group.commodities) do
@@ -40,6 +41,7 @@ local function load_commodities()
             local lower_name = string.lower(canonical)
 
             name_to_canonical[lower_name] = canonical
+            base_prices[canonical] = commodity.basePrice
 
             if commodity.shortName then
                 local lower_short = string.lower(commodity.shortName)
@@ -50,7 +52,8 @@ local function load_commodities()
 
     commodity_cache = {
         name_to_canonical = name_to_canonical,
-        short_to_canonical = short_to_canonical
+        short_to_canonical = short_to_canonical,
+        base_prices = base_prices
     }
 
     f2t_debug_log("[commodities] Loaded %d commodities with %d short names",
@@ -104,6 +107,28 @@ function f2t_get_all_commodities()
 
     table.sort(commodities)
     return commodities
+end
+
+-- Fixed game base prices, not live quotes or estimated hauling profits.
+-- Ties use canonical name order so selection is stable across reloads.
+function f2t_get_highest_base_commodities(limit)
+    local cache = load_commodities()
+    if not cache then return nil, "Commodity base-price catalog unavailable" end
+    local names = f2t_get_all_commodities()
+    for _, name in ipairs(names) do
+        local price = cache.base_prices[name]
+        if type(price) ~= "number" or price <= 0 or price >= math.huge or price ~= price then
+            return nil, "Invalid commodity base price: " .. name
+        end
+    end
+    if #names < limit then return nil, "Incomplete commodity base-price catalog" end
+    table.sort(names, function(a, b)
+        if cache.base_prices[a] == cache.base_prices[b] then return a < b end
+        return cache.base_prices[a] > cache.base_prices[b]
+    end)
+    local selected = {}
+    for i = 1, limit do selected[i] = names[i] end
+    return selected
 end
 
 -- Check if a commodity name is valid (full name or short name)

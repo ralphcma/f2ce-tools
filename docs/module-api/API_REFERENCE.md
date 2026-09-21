@@ -266,6 +266,15 @@ access, change the commodity, or authorize a silent provider fallback.
 
 Events: `hauling.started`, `hauling.state`, and `hauling.stopped`. Status copies the established F2CE state fields, including `active`, `paused`, `mode`, `current_phase`, `stopping`, and counters when present.
 
+Native ew41 adds capability `hauling.rotation_top_base21` and the optional
+`rotation="top_base_21"` argument to `hauling.start` in exchange mode only.
+FedHauler 1.17.29 uses it for its existing Premium Hauler. This session-local
+selection scans/rotates the 21 highest `commodities.json` base prices, with
+canonical-name tie ordering, and preserves existing per-profile attempt
+checkpoints. Nil keeps the full catalog; ordinary starts clear the selection.
+An unsupported/invalid selection is rejected before acquiring command authority.
+It does not modify selling behavior or manual price-all/other price consumers.
+
 ## Map queries
 
 - `API.map.roomHasFlag(room_id,flag)`.

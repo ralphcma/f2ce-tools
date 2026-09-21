@@ -1,5 +1,38 @@
 # Module API verification
 
+## 2026-09-20 FedHauler premium top-21 base-price rotation
+
+Candidate `f2ce-tools-3.3.0-native-ew41.mpackage`, SHA256
+`1a27e159ab53a98da4515eb28691056f6e32b6d92866ed3fdd6a3747af57f7f4`.
+Companion `fed-hauler-live-1.17.29.mpackage`, SHA256
+`d4cb425d146333c37e20b2006684a5608d0b2b75a1d121d48ede6f0fada03bb9`.
+
+FedHauler's existing Premium Hauler now requests a session-local rotation of
+the 21 highest fixed base-price commodities. The bundled catalog establishes
+the cutoff; Gold and Tracers are both included at 600ig. The premium scan sends
+exactly those 21 requests and never substitutes lower-base commodities when a
+selected item is unavailable, excluded or unprofitable. Ordinary exchange
+hauling and manual price-all retain the complete 67-commodity catalog.
+
+Existing dual-copy per-profile progress is reused. Previously attempted members
+of the selected 21 remain attempted; markers for the other 46 do not prevent the
+selected round from completing. Stops, reconnects and package replacement retain
+progress, while loading remains inert. Older native packages reject Premium
+Hauler Start before command authority is acquired instead of silently scanning
+all 67.
+
+Selling is unchanged from ew40. No sale, bulk-trade, buyer-selection, customs,
+receipt or whole-load profit source was modified. The existing 82 hauling tests
+continue to pass on source and the reconstructed package.
+
+All native suites passed on source and reconstructed packaged Lua: 273 syntax
+checks, 32 metadata checks, 233 packaged Lua bodies matched; 85 company API,
+27 API, seven adapter, 30 Walker, 16 counted-bulk/receipt, five catalog,
+82 hauling, 26 rotation and all remaining map/stamina/Who suites passed. All
+538 private FedHauler tests passed, including 122 native integration tests.
+Whitespace checks passed. Tests use mocked transport/GMCP fixtures, not the live
+server. Nothing was installed, started or pushed.
+
 ## 2026-09-20 Whole-load sale profit instead of a highest-bay veto
 
 Candidate `f2ce-tools-3.3.0-native-ew40.mpackage`, SHA256
