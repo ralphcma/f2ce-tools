@@ -9,7 +9,17 @@
 > for native Walker or FedHauler 1.16.0. Walker adds a Founder+ tab beside
 > Who/Events/Exchange, with a sortable remote exchange table and bottom controls.
 
-Native candidate **ew39** recognizes both ship-sale receipt wordings ("sold for"
+Native candidate **ew40** judges sale eligibility on **whole-load profit greater
+than 1ig**, not the most expensive remaining bay. The minimum remaining net bid
+is `(actual purchase receipts + 2ig - confirmed net sales) / remaining tons`,
+clamped at zero. The same rule selects alternative buyers and guards local
+sales. Earlier sales from this load count; prior loads/session profit do not.
+The last observed per-bay customs deduction at a buyer is included in subsequent
+quote estimates. Each sale still requires a fresh quote and cargo reconciliation;
+prices and customs may change before execution, so projected profit is not a
+guarantee. Existing new-purchase margin settings are unchanged.
+
+Included from **ew39**: both ship-sale receipt wordings ("sold for"
 and "sold to the exchange for"). A preceding cartel-customs notice, including
 wrapped continuations, supplies net proceeds for accounting and the cost guard;
 the customs notice alone cannot confirm a sale. Mismatched/incomplete notices
@@ -50,8 +60,8 @@ The price API/table setting now accepts up to **50 buyers and suppliers**;
 FedHauler 1.17.28 requests that limit. Routing still searches the full filtered
 market beyond those shortlists. Counted bulk purchases are retained, with costs
 summed from actual server receipts. **All exchange hauling sales**, including
-the original buyer, check fresh local bids against the highest remaining bay
-cost and sell one bay at a time. Completed-load/session profits use actual
+the original buyer, check fresh local bids against the whole-load profit target
+and sell one bay at a time. Completed-load/session profits use actual
 receipts, not cached quotes or an extrapolated first-bay cost. Existing unexpected
 cargo is preserved, never dumped or jettisoned to start a new purchase.
 
@@ -63,13 +73,13 @@ trade direction until the next commodity pass; they are not map blacklists.
 Routing uses the full, policy-filtered price response, not the UI's bounded
 shortlist. An exhausted cache gets one price refresh. No remaining supplier skips
 the commodity. New purchases retain their margin checks; already-owned recovery
-cargo may clear at break-even or better. Recovery checks the highest remaining
-bay cost against a fresh, current-room bid and sells one bay at a time, waiting
+cargo may clear whenever projected whole-load profit exceeds 1ig. Recovery checks
+the remaining whole-load target against a fresh, current-room bid and sells one bay at a time, waiting
 for both its cargo reconciliation and a new quote before another sale. A cleared
-load advances to the next commodity. No break-even buyer leaves cargo aboard with an explanatory stop
+load advances to the next commodity. No eligible buyer leaves cargo aboard with an explanatory stop
 message. Uncertain timed-out trades stop without retries. The server does not
 offer an atomic minimum-price order: if a concurrent change beats the last local
-quote, the receipt is recorded and further recovery sales stop.
+quote, its actual net receipt is recorded and the remaining load is re-evaluated.
 
 A Mudlet package for [Federation 2 Community Edition](https://federation2.com) — mapping, navigation, automated trading, factory management, planet-owner tools, and quality-of-life automation, with an optional [Muxlet](https://github.com/tmtocloud/Muxlet)-based GUI.
 

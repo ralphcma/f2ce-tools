@@ -8,17 +8,49 @@ local function room_key()
     return normalized(room.system) .. "\t" .. normalized(room.area) .. "\t" .. tostring(room.num)
 end
 
-function f2t_hauling_cargo_floor()
+local function valid_amount(value)
+    return type(value) == "number" and value == value and value >= 0 and value < 2^53
+end
+
+-- Ship costs validate the cargo identity, not the profit target for each bay.
+function f2t_hauling_cargo_cost()
     local cargo = gmcp and gmcp.char and gmcp.char.ship and gmcp.char.ship.cargo
     if type(cargo) ~= "table" or #cargo == 0 then return nil end
-    local floor = 0
+    local total = 0
     for _, lot in ipairs(cargo) do
         local cost = tonumber(lot.cost)
         if normalized(lot.commodity) ~= normalized(F2T_HAULING_STATE.current_commodity)
-            or not cost or cost ~= cost or cost < 0 or cost == math.huge then return nil end
-        floor = math.max(floor, cost)
+            or not valid_amount(cost) then return nil end
+        total = total + cost * 75
     end
-    return floor
+    if not valid_amount(total) then return nil end
+    return total, #cargo
+end
+
+function f2t_hauling_cargo_floor()
+    local _, remaining = f2t_hauling_cargo_cost()
+    local stats = F2T_HAULING_STATE.current_commodity_stats
+    if not remaining or type(stats) ~= "table" or not valid_amount(stats.total_cost)
+        or not valid_amount(stats.total_revenue) or not valid_amount(stats.lots_bought)
+        or not valid_amount(stats.lots_sold) or stats.lots_bought % 1 ~= 0
+        or stats.lots_sold % 1 ~= 0 or stats.lots_bought ~= stats.lots_sold + remaining then return nil end
+    -- Groats are integral: more than 1ig of whole-load profit requires 2ig.
+    -- Prior NET receipts belong to this load only, never to earlier cycles.
+    return math.max(0, stats.total_cost + 2 - stats.total_revenue) / (remaining * 75)
+end
+
+local function buyer_key(location)
+    return normalized(location and location.system) .. "\t" .. normalized(location and location.planet)
+end
+
+function f2t_hauling_buyer_floor(location)
+    local floor = f2t_hauling_cargo_floor()
+    if not floor then return nil end
+    local market = F2T_HAULING_STATE.exchange_market
+    local deduction = market and market.sale_deductions and market.sale_deductions[buyer_key(location)] or 0
+    -- The last observed per-bay customs deduction is an estimate, not a fixed
+    -- tariff guarantee. Reconcile each new net receipt and refresh the quote.
+    return floor + deduction / 75
 end
 
 local function clear_wait(watch)
@@ -86,7 +118,7 @@ function f2t_hauling_phase_recovery_sell()
         finish_recovery()
         return
     end
-    local floor = f2t_hauling_cargo_floor()
+    local floor = f2t_hauling_buyer_floor(state.sell_location)
     if not floor or not state.sell_location then
         stop_recovery("Cargo/cost could not be verified; stopping with cargo preserved.")
         return
@@ -117,11 +149,11 @@ function f2t_hauling_phase_recovery_sell()
             or normalized(room.system) ~= normalized(state.sell_location.system)
             or not f2t_has_value(room.flags or {}, "exchange")
             or quote.sequence <= (state.recovery_after_sequence or 0) then return end
-        floor = f2t_hauling_cargo_floor()
+        floor = f2t_hauling_buyer_floor(state.sell_location)
         if not floor then return end
         if quote.bid ~= quote.bid or quote.bid == math.huge then return end
         if quote.bid <= 0 or quote.bid < floor then
-            next_buyer("Local bid is no longer break-even or better")
+            next_buyer("Local bid no longer projects more than 1ig profit for the whole load")
             return
         end
         clear_wait(watch)
@@ -149,10 +181,13 @@ function f2t_hauling_phase_recovery_sell()
             end
             state.current_commodity_stats.lots_sold = state.current_commodity_stats.lots_sold + 1
             state.current_commodity_stats.total_revenue = state.current_commodity_stats.total_revenue + revenue
-            if revenue < floor * 75 then
-                stop_recovery("Net sale proceeds fell below purchase cost (price change or customs); stopping remaining cargo.")
-                return
+            local gross = receipt and tonumber(receipt.gross_revenue)
+            if market and valid_amount(gross) and gross >= revenue then
+                market.sale_deductions = market.sale_deductions or {}
+                market.sale_deductions[buyer_key(state.sell_location)] = gross - revenue
             end
+            -- A below-cost individual bay is not a failed load. Credit its net
+            -- proceeds, settle cargo, then re-evaluate the remaining whole load.
             state.recovery_expected_lots = before - 1
             -- Accept the genuine post-order tick even if it preceded the text
             -- sale receipt. Cargo and receipt still must both reconcile.

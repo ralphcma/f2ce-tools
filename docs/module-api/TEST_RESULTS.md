@@ -1,5 +1,47 @@
 # Module API verification
 
+## 2026-09-20 Whole-load sale profit instead of a highest-bay veto
+
+Candidate `f2ce-tools-3.3.0-native-ew40.mpackage`, SHA256
+`13fcec8d3c62ce7b3f52d572f7f491ea175fff93d9f39a40a1024a415a726135`.
+
+Sale eligibility now requires projected whole-load profit greater than 1ig.
+The minimum remaining net bid is `(purchase receipt total + 2 - net proceeds
+already received) / remaining tons`, clamped at zero. Groats are integral, so
+exactly 1ig or zero profit does not satisfy the requested greater-than-1ig rule.
+Both alternative selection and the current-room guard use this budget. Neither
+the most expensive remaining bay nor a percentage margin vetoes delivery of an
+otherwise profitable owned load. New-purchase margin settings are unchanged.
+
+The purchase/sales receipt ledger must reconcile with remaining cargo counts;
+missing, invalid or mismatched accounting stops instead of guessing a cost.
+Earlier receipts count only within this load. Previous loads and session profit
+cannot subsidize a new losing load. A below-individual-cost sale is recorded,
+settled against cargo GMCP, then the remaining budget is recalculated. The bulk
+callback adds gross_revenue while preserving net revenue, allowing each buyer's
+most recent observed per-bay customs deduction to inform later quote estimates.
+That observation is commodity/buyer scoped and is not a fixed tariff guarantee.
+
+The reported Crystals case is now a full regression: fourteen bays requested,
+thirteen purchased, then not-selling refusal; 975 tons cost 726,900ig, including
+an 830ig/ton bay. Thirteen guarded sales at 803ig/ton complete exactly once for
+782,925ig revenue and 56,025ig load profit. No duplicate purchase or stalled
+expensive last bay occurs. Further cases cover profitable early sales funding
+later cheap bays, strict 0/1/2ig boundaries, already-recovered purchase cost,
+missing ledgers, changing quotes, and buyer-specific customs deductions.
+
+All native suites passed on source and reconstructed packaged Lua: 272 syntax
+checks, 32 metadata checks, 233 packaged Lua bodies matched; 82 hauling tests,
+16 counted-bulk/receipt tests, and 20 rotation tests passed. All other native
+suites, sale/customs regex checks, and all 535 private FedHauler tests passed,
+including 119 native integration tests. Whitespace checks passed.
+
+FedHauler remains 1.17.28. Tests are offline with mocked GMCP and receipt
+fixtures, not live-server verification. No profile installation, gameplay,
+remote push or PR update occurred. Quotes/customs may change before execution;
+projected profit is not guaranteed. Existing stopped cargo is not automatically
+adopted into a new run without its original load ledger.
+
 ## 2026-09-20 Ship-sale wording and cartel customs net receipts
 
 Candidate `f2ce-tools-3.3.0-native-ew39.mpackage`, SHA256

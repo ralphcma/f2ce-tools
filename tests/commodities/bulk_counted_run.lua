@@ -140,6 +140,7 @@ test("reported Candy customs and short sale receipt count one net sale", functio
     receipt(sold_line)
     equal(callback_result.lots,1,"one confirmed bay"); equal(callback_result.status,"success","sale recognized")
     equal(callback_result.receipt.revenue,37995,"net revenue not gross")
+    equal(callback_result.receipt.gross_revenue,49425,"gross retained for deduction estimates")
     equal(sent[1],"sell libraries 1","one sale"); equal(#sent,1,"no retry")
     receipt(sold_line); equal(callback_result.lots,1,"late duplicate ignored after completion")
     equal(F2T_BULK_STATE.sale_customs,nil,"tax capture cleared")
@@ -165,6 +166,7 @@ test("counted sale applies each customs notice only to its own receipt", functio
     receipt(sold_line)
     equal(callback_result.lots,2,"both receipts")
     equal(callback_result.receipt.revenue,87420,"one taxed and one untaxed receipt")
+    equal(callback_result.receipt.gross_revenue,98850,"gross accumulation")
     equal(#sent,1,"one counted command")
 end)
 

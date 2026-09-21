@@ -174,6 +174,7 @@ function f2t_bulk_sell_start(commodity, requested_lots, callback)
     F2T_BULK_STATE.sell_all_cargo = lots_to_sell == #(gmcp.char.ship.cargo or {})
     F2T_BULK_STATE.total_cost = total_cost
     F2T_BULK_STATE.total_revenue = 0
+    F2T_BULK_STATE.total_gross_revenue = 0
     F2T_BULK_STATE.lots_sold = 0
 
     -- Only show user feedback in user mode
@@ -218,6 +219,7 @@ function f2t_bulk_sell_next_commodity()
     F2T_BULK_STATE.total = available_lots
     F2T_BULK_STATE.total_cost = total_cost
     F2T_BULK_STATE.total_revenue = 0
+    F2T_BULK_STATE.total_gross_revenue = 0
     F2T_BULK_STATE.lots_sold = 0
 
     f2t_debug_log("[bulk-sell] Starting commodity %d/%d: %s (%d lots, cost: %d ig)",
@@ -306,6 +308,7 @@ function f2t_bulk_sell_success(commodity, revenue_per_ton, revenue_total)
         f2t_bulk_sell_error("Sale commodity/proceeds do not reconcile with the active order", "invalid_receipt")
         return
     end
+    F2T_BULK_STATE.total_gross_revenue = (F2T_BULK_STATE.total_gross_revenue or 0) + revenue_total
     if customs then revenue_total = customs.net end
     F2T_BULK_STATE.sale_customs = nil
     revenue_per_ton = math.floor(revenue_total / 75)
@@ -403,6 +406,7 @@ function f2t_bulk_sell_finish()
     -- Capture margin data before reset
     local total_cost = F2T_BULK_STATE.total_cost or 0
     local total_revenue = F2T_BULK_STATE.total_revenue or 0
+    local gross_revenue = F2T_BULK_STATE.total_gross_revenue or 0
     local lots_sold_count = F2T_BULK_STATE.lots_sold or 0
     local total_lots = F2T_BULK_STATE.total or 0
 
@@ -419,6 +423,7 @@ function f2t_bulk_sell_finish()
     F2T_BULK_STATE.sale_customs = nil
     F2T_BULK_STATE.total_cost = 0
     F2T_BULK_STATE.total_revenue = 0
+    F2T_BULK_STATE.total_gross_revenue = 0
     F2T_BULK_STATE.lots_sold = 0
 
     -- User mode: show formatted output with margin info
@@ -466,7 +471,7 @@ function f2t_bulk_sell_finish()
     else
         local status = sold > 0 and "success" or "failed"
         if code == "timeout" or code == "invalid_receipt" then status = "error" end
-        callback(commodity, sold, status, reason, code, {revenue=total_revenue})
+        callback(commodity, sold, status, reason, code, {revenue=total_revenue, gross_revenue=gross_revenue})
     end
 end
 

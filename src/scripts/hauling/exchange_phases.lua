@@ -73,9 +73,8 @@ function f2t_hauling_retry_exchange(side)
     local function choose()
         local candidates = available_locations(side, market[side])
         local buyer = side == "buy" and available_locations("sell", market.sell)[1]
-        local cargo_floor = side == "sell" and f2t_hauling_cargo_floor()
         for _, candidate in ipairs(candidates) do
-            local cost = side == "buy" and candidate.price or cargo_floor
+            local cost = side == "buy" and candidate.price or f2t_hauling_buyer_floor(candidate)
             local bid = side == "sell" and candidate.price or (buyer and buyer.price)
             local required = cost and (side == "sell" and cost or cost * (1 + state.margin_threshold_pct / 100))
             if required and bid and bid > 0 and bid >= required and (side == "sell" or bid > cost) then
@@ -114,10 +113,10 @@ function f2t_hauling_retry_exchange(side)
             local best = remaining[1] and remaining[1].price
             cecho(string.format(
                 "\n<yellow>[hauling]<reset> Buyer search for %s: %d quoted, %d untried after refusals; " ..
-                "best remaining bid %s, purchase-cost floor %sig/ton. " ..
+                "best remaining bid %s, whole-load minimum net bid %sig/ton (>1ig profit). " ..
                 "Stopping with unsold cargo preserved.\n", state.current_commodity,
                 market.quoted.sell, #remaining, best and (tostring(best) .. "ig/ton") or "none",
-                tostring(f2t_hauling_cargo_floor() or "unknown")))
+                f2t_hauling_cargo_floor() and string.format("%.2f", f2t_hauling_cargo_floor()) or "unknown"))
             f2t_hauling_do_stop()
         end
     end)
@@ -572,7 +571,7 @@ function f2t_hauling_purchase_observe()
     if not pending or not state.active or state.exchange_market ~= pending.market
         or state.current_commodity ~= pending.commodity or state.current_phase ~= "waiting_buy_cargo" then return end
     local cargo = gmcp and gmcp.char and gmcp.char.ship and gmcp.char.ship.cargo
-    if type(cargo) ~= "table" or #cargo ~= pending.lots or not f2t_hauling_cargo_floor() then return end
+    if type(cargo) ~= "table" or #cargo ~= pending.lots or not f2t_hauling_cargo_cost() then return end
     f2t_hauling_purchase_cleanup()
     pending.complete()
 end
