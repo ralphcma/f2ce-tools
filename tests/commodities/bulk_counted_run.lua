@@ -86,5 +86,34 @@ test("partial sale stays bounded to commodity and count", function()
     equal(sent[1], "sell nanos 2", "partial sell command")
 end)
 
+test("full-hold GMCP before fourteen text receipts cannot finish a counted buy early", function()
+    reset(); gmcp.char.ship.hold={cur=1050,max=1050}; gmcp.char.ship.cargo={}
+    local completions=0
+    f2t_bulk_buy_start("Artifacts",nil,function(_,lots,status,_,_,receipt)
+        completions=completions+1; callback_result={lots=lots,status=status,receipt=receipt}
+    end)
+    gmcp.char.ship.hold.cur=0
+    for i=1,14 do gmcp.char.ship.cargo[i]={commodity="Artifacts",cost=100+i} end
+    for i=1,13 do
+        f2t_bulk_buy_success(7500+75*i)
+        equal(completions,0,"all receipts remain necessary even when GMCP says full")
+        equal(F2T_BULK_STATE.active,true,"counted buy remains active")
+    end
+    f2t_bulk_buy_success(8550)
+    equal(completions,1,"one final callback"); equal(callback_result.lots,14,"all bought lots")
+    equal(callback_result.receipt.count,14,"all cost receipts")
+    equal(callback_result.receipt.cost,112875,"sum all varying costs")
+    equal(#sent,1,"no duplicate purchase"); equal(sent[1],"buy artifacts 14","one counted buy")
+end)
+
+test("missing hold GMCP during replies is not an early completion signal", function()
+    reset(); gmcp.char.ship.hold={cur=150,max=1050}
+    f2t_bulk_buy_start("Artifacts",2,function(_,lots) callback_result=lots end)
+    gmcp.char.ship.hold=nil
+    f2t_bulk_buy_success(7500); equal(callback_result,nil,"first receipt waits")
+    f2t_bulk_buy_success(7575); equal(callback_result,2,"second receipt completes")
+    equal(#sent,1,"missing GMCP cannot duplicate purchase")
+end)
+
 io.write(string.format("RESULT %d passed, %d failed\n", passed, failed))
 if failed > 0 then os.exit(1) end

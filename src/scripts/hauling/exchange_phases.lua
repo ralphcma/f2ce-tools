@@ -558,8 +558,53 @@ function f2t_hauling_phase_navigate_to_buy()
     end
 end
 
+-- Text receipts and ship GMCP are independent arrivals. Once all receipts have
+-- arrived, keep the haul parked until the matching cargo count/costs are visible.
+function f2t_hauling_purchase_cleanup()
+    local pending = F2T_HAULING_STATE.purchase_settlement
+    if pending and pending.timer then killTimer(pending.timer) end
+    F2T_HAULING_STATE.purchase_settlement = nil
+end
+
+function f2t_hauling_purchase_observe()
+    local state = F2T_HAULING_STATE
+    local pending = state.purchase_settlement
+    if not pending or not state.active or state.exchange_market ~= pending.market
+        or state.current_commodity ~= pending.commodity or state.current_phase ~= "waiting_buy_cargo" then return end
+    local cargo = gmcp and gmcp.char and gmcp.char.ship and gmcp.char.ship.cargo
+    if type(cargo) ~= "table" or #cargo ~= pending.lots or not f2t_hauling_cargo_floor() then return end
+    f2t_hauling_purchase_cleanup()
+    pending.complete()
+end
+
+local function wait_for_purchase_cargo(lots, complete)
+    local state = F2T_HAULING_STATE
+    f2t_hauling_purchase_cleanup()
+    local pending = {lots=lots, complete=complete, market=state.exchange_market, commodity=state.current_commodity}
+    state.purchase_settlement = pending
+    state.current_phase = "waiting_buy_cargo"
+    pending.timer = tempTimer(5, function()
+        if state ~= F2T_HAULING_STATE or not state.active or state.purchase_settlement ~= pending
+            or state.exchange_market ~= pending.market then return end
+        f2t_hauling_purchase_cleanup()
+        cecho("\n<red>[hauling]<reset> Purchase receipts arrived but cargo GMCP did not reconcile within 5 seconds; " ..
+            "stopping with cargo preserved and no automatic retry.\n")
+        f2t_hauling_do_stop()
+    end)
+    f2t_hauling_purchase_observe()
+end
+
 -- Phase 3: buy commodity
 function f2t_hauling_phase_buy()
+    if not F2T_HAULING_STATE.active or F2T_HAULING_STATE.paused then return end
+    if F2T_HAULING_STATE.purchase_settlement then
+        -- A repeated arrival/resume transition must not erase the pending phase.
+        F2T_HAULING_STATE.current_phase = "waiting_buy_cargo"
+        f2t_hauling_purchase_observe()
+        return
+    end
+    -- Immediate pause/resume during a counted response must not resend it.
+    if F2T_BULK_STATE and F2T_BULK_STATE.active then return end
     if not F2T_HAULING_STATE.current_commodity then
         cecho("\n<red>[hauling]<reset> No commodity selected\n")
         f2t_hauling_stop()
@@ -593,7 +638,7 @@ function f2t_hauling_phase_buy()
             return
         end
 
-        local cargo = gmcp.char.ship.cargo
+        local cargo = gmcp and gmcp.char and gmcp.char.ship and gmcp.char.ship.cargo
         if code == "not_selling" then
             reject_location("buy", F2T_HAULING_STATE.buy_location)
             if lots_bought == 0 and cargo and #cargo == 0 then
@@ -604,7 +649,7 @@ function f2t_hauling_phase_buy()
             -- A partially filled counted buy is still cargo to deliver, not
             -- permission to buy another hold from a different supplier.
         end
-        if not cargo or #cargo == 0 then
+        if lots_bought == 0 then
             cecho("\n<red>[hauling]<reset> Buy failed - no cargo loaded\n")
             f2t_hauling_stop()
             return
@@ -614,28 +659,29 @@ function f2t_hauling_phase_buy()
         -- bay or a remote quote when subsequent bays may cost more.
         local total_cost = receipt and tonumber(receipt.cost)
         if lots_bought < 1 or not total_cost or total_cost ~= total_cost or total_cost < 0
-            or total_cost == math.huge or receipt.count ~= lots_bought or #cargo ~= lots_bought
-            or not f2t_hauling_cargo_floor() then
-            cecho("\n<red>[hauling]<reset> Purchase receipts/cargo did not reconcile; stopping without retry.\n")
+            or total_cost == math.huge or receipt.count ~= lots_bought then
+            cecho("\n<red>[hauling]<reset> Purchase receipts did not reconcile; stopping without retry.\n")
             f2t_hauling_do_stop()
             return
         end
-        F2T_HAULING_STATE.actual_cost = total_cost / (lots_bought * 75)
-        F2T_HAULING_STATE.current_commodity_stats.lots_bought =
-            F2T_HAULING_STATE.current_commodity_stats.lots_bought + lots_bought
-        F2T_HAULING_STATE.current_commodity_stats.total_cost =
-            F2T_HAULING_STATE.current_commodity_stats.total_cost + total_cost
+        wait_for_purchase_cargo(lots_bought, function()
+            F2T_HAULING_STATE.actual_cost = total_cost / (lots_bought * 75)
+            F2T_HAULING_STATE.current_commodity_stats.lots_bought =
+                F2T_HAULING_STATE.current_commodity_stats.lots_bought + lots_bought
+            F2T_HAULING_STATE.current_commodity_stats.total_cost =
+                F2T_HAULING_STATE.current_commodity_stats.total_cost + total_cost
 
-        f2t_debug_log("[hauling] Tracking buy: %d lots averaging %.2f ig/ton = %d ig confirmed cost",
-            lots_bought, F2T_HAULING_STATE.actual_cost, total_cost)
+            f2t_debug_log("[hauling] Tracking buy: %d lots averaging %.2f ig/ton = %d ig confirmed cost",
+                lots_bought, F2T_HAULING_STATE.actual_cost, total_cost)
 
-        local bought_msg =
-            "\n<green>[hauling]<reset> Bought %d lots of <cyan>%s<reset> averaging <yellow>%.2f ig/ton<reset> " ..
-            "(cost: %d ig)\n"
-        cecho(string.format(bought_msg, lots_bought, commodity, F2T_HAULING_STATE.actual_cost, total_cost))
+            local bought_msg =
+                "\n<green>[hauling]<reset> Bought %d lots of <cyan>%s<reset> averaging <yellow>%.2f ig/ton<reset> " ..
+                "(cost: %d ig)\n"
+            cecho(string.format(bought_msg, lots_bought, commodity, F2T_HAULING_STATE.actual_cost, total_cost))
 
-        if state.paused then state.current_phase = "navigating_to_sell"
-        else f2t_hauling_transition("navigating_to_sell") end
+            if state.paused then state.current_phase = "navigating_to_sell"
+            else f2t_hauling_transition("navigating_to_sell") end
+        end)
     end)
 end
 
@@ -861,6 +907,7 @@ end
 
 --- @return string Event handler ID
 function f2t_exchange_register_handlers()
+    f2t_hauling_purchase_cleanup()
     f2t_hauling_recovery_cleanup()
     local handler_id = registerAnonymousEventHandler("gmcp.room.info", function()
         f2t_hauling_recovery_observe("room")
@@ -874,7 +921,10 @@ function f2t_exchange_register_handlers()
     F2T_HAULING_STATE.recovery_handlers = {
         registerAnonymousEventHandler("gmcp.exchange.commodities", function() f2t_hauling_recovery_observe("full") end),
         registerAnonymousEventHandler("gmcp.exchange.commodity", function() f2t_hauling_recovery_observe("tick") end),
-        registerAnonymousEventHandler("gmcp.char.ship", function() f2t_hauling_recovery_observe("cargo") end),
+        registerAnonymousEventHandler("gmcp.char.ship", function()
+            f2t_hauling_purchase_observe()
+            f2t_hauling_recovery_observe("cargo")
+        end),
     }
 
     f2t_debug_log("[hauling/exchange] Registered Exchange event handlers")
@@ -883,6 +933,7 @@ end
 
 --- @param handler_id string Event handler ID to kill
 function f2t_exchange_cleanup_handlers(handler_id)
+    f2t_hauling_purchase_cleanup()
     f2t_hauling_recovery_cleanup()
     for _, id in ipairs(F2T_HAULING_STATE.recovery_handlers or {}) do killAnonymousEventHandler(id) end
     F2T_HAULING_STATE.recovery_handlers = nil

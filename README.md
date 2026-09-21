@@ -9,7 +9,15 @@
 > for native Walker or FedHauler 1.16.0. Walker adds a Founder+ tab beside
 > Who/Events/Exchange, with a sortable remote exchange table and bottom controls.
 
-Native candidate **ew37** integrates the incremental Who-tab updates from local
+Native candidate **ew38** fixes counted purchases when GMCP runs ahead of text
+receipts. A full hold no longer completes a multi-bay buy after its first receipt:
+all requested receipts (or an explicit terminal refusal/error) are required.
+If receipts arrive before cargo GMCP, exchange hauling waits up to five seconds
+for the matching cargo instead of immediately failing. Pause/resume cannot resend
+the in-flight buy. Missing receipts/cargo still stop safely without retrying.
+Counted bulk commands, exact receipt accounting, and saved rotation are retained.
+
+Included from **ew37**: the incremental Who-tab updates from local
 commits `2bc5bf6` and `a3c4508`: unchanged player feeds do not refresh consumers,
 changed player rows are updated in place where safe, and repeated updates are
 coalesced. Membership/sort changes and legacy or malformed events fall back to

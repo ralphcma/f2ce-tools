@@ -133,19 +133,11 @@ function f2t_bulk_buy_success(cost)
     F2T_BULK_STATE.remaining = F2T_BULK_STATE.remaining - 1
     f2t_debug_log("[bulk-buy] Buy successful (%d remaining)", F2T_BULK_STATE.remaining)
 
-    -- Check if we still have room and should continue
-    -- Note: gmcp.char.ship.hold.cur = available space (not used space)
-    local hold = gmcp.char and gmcp.char.ship and gmcp.char.ship.hold
-    local available_space = hold and hold.cur or 0
-
-    if available_space < 75 then
-        -- Hold is full
-        f2t_debug_log("[bulk-buy] Hold is full (%d tons available), stopping", available_space)
-        if not F2T_BULK_STATE.callback then
-            cecho("\n<yellow>[bulk-buy]<reset> Hold is full\n")
-        end
-        f2t_bulk_buy_finish()
-    elseif F2T_BULK_STATE.remaining > 0 then
+    -- A full-hold GMCP snapshot can arrive before the first of several text
+    -- receipts. It is not proof that the counted command's replies are drained.
+    -- Finish only after the requested receipt count or an explicit terminal
+    -- refusal/error, never from hold.cur (including missing ship GMCP).
+    if F2T_BULK_STATE.remaining > 0 then
         -- A counted buy produces one success line per bay. Keep waiting for
         -- the remaining replies; sending again here would duplicate buys.
         f2t_bulk_watchdog_start()

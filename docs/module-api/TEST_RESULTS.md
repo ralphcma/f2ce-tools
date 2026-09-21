@@ -1,5 +1,37 @@
 # Module API verification
 
+## 2026-09-20 Counted purchase receipts independent of GMCP arrival order
+
+Candidate `f2ce-tools-3.3.0-native-ew38.mpackage`, SHA256
+`170f1a3e15f599ad9df13652fe4b85ea9ae2e78b0934d8971822fcfe08cb57e8`.
+
+Reproduced the premature completion of a fourteen-bay purchase: a full-hold
+GMCP snapshot arrived before the first text receipt, causing the old bulk buy
+handler to finish after one receipt and the hauling accounting guard to stop.
+Completion now requires the requested receipt count or an explicit terminal
+response, not the GMCP free-space value. The command is still sent only once.
+
+When complete receipts precede ship cargo, hauling waits up to five seconds for
+the matching cargo count and valid commodity/cost records. Accounting uses the
+sum of actual receipts, not a quoted price or an extrapolated first-bay cost.
+Partial refusal delivers only confirmed cargo. Missing receipts or cargo stop
+without replay. Immediate/deferred pause, repeated arrival/resume transitions,
+handler cleanup, replaced state, and the safe-room stop delay cannot cause a
+duplicate buy or revive a stopped purchase callback.
+
+All native suites passed against source and reconstructed packaged Lua:
+270 syntax checks, 32 metadata checks, and 231 packaged Lua bodies matching
+source. Counted bulk tests: 5 passed; hauling refusal/accounting/ordering tests:
+72 passed; rotation persistence tests: 20 passed. The three Who/table suites
+and all other native suites passed. All 535 private FedHauler tests passed,
+including 119 native integration tests. Diff whitespace checks passed.
+
+This package retains ew37's Who improvements, ew36's 50-candidate shortlists,
+durable 67-commodity rotation, and guarded sales. FedHauler remains 1.17.28.
+Validation was offline: no live profile installation, gameplay command, remote
+push, or PR update was performed. Existing cargo from an already stopped live
+session is not automatically sold or resumed by installing this package.
+
 ## 2026-09-20 Incremental Who refresh integrated with native services
 
 Candidate `f2ce-tools-3.3.0-native-ew37.mpackage`, SHA256

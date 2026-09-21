@@ -316,6 +316,10 @@ end
 
 -- Internal function to actually stop hauling (preserves statistics)
 function f2t_hauling_do_stop()
+    -- Invalidate purchase callbacks before the optional safe-room stop delay.
+    if f2t_hauling_purchase_cleanup then f2t_hauling_purchase_cleanup() end
+    F2T_HAULING_STATE.exchange_market = nil
+
     -- Clear navigation ownership
     if f2t_map_clear_nav_owner then
         f2t_map_clear_nav_owner()
@@ -826,6 +830,8 @@ function f2t_hauling_transition(new_phase)
         f2t_hauling_phase_navigate_to_buy()
     elseif new_phase == "buying" then
         f2t_hauling_phase_buy()
+    elseif new_phase == "waiting_buy_cargo" then
+        f2t_hauling_purchase_observe()
     elseif new_phase == "navigating_to_sell" then
         f2t_hauling_phase_navigate_to_sell()
     elseif new_phase == "selling" then

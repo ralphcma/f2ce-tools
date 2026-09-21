@@ -39,6 +39,7 @@ dofile(root .. "/src/scripts/hauling/state_machine.lua")
 dofile(root .. "/src/scripts/hauling/exchange_recovery.lua")
 dofile(root .. "/src/scripts/hauling/exchange_phases.lua")
 local real_complete_cycle = f2t_hauling_complete_commodity_cycle
+local real_do_stop = f2t_hauling_do_stop
 function f2t_hauling_do_stop()
     stopped=stopped+1
     F2T_HAULING_STATE.active=false
@@ -482,6 +483,137 @@ test("forced pause at a zero-fill refusal resumes with another supplier", functi
     equal(#navigated,0); equal(F2T_HAULING_STATE.current_phase,"finding_buy")
     F2T_HAULING_STATE.paused=false; f2t_hauling_transition("finding_buy")
     equal(navigated[1],"Supplier B"); equal(#sent,1)
+end)
+
+test("fourteen-bay full GMCP ahead of text waits for the final receipt", function()
+    reset(); gmcp.char.ship.hold={cur=1050,max=1050}; buy()
+    cargo(14); gmcp.char.ship.hold={cur=0,max=1050}
+    for i=1,13 do
+        f2t_bulk_buy_success(7500+75*i)
+        equal(stopped,0); equal(#navigated,0); equal(F2T_BULK_STATE.active,true)
+    end
+    f2t_bulk_buy_success(8550)
+    equal(navigated[1],"Buyer A"); equal(#navigated,1); equal(stopped,0)
+    equal(F2T_HAULING_STATE.current_commodity_stats.lots_bought,14)
+    equal(F2T_HAULING_STATE.current_commodity_stats.total_cost,112875)
+    equal(sent[1],"buy nanofabrics 14"); equal(#sent,1); no_timer()
+end)
+
+test("complete receipts wait for delayed cargo then navigate only once", function()
+    reset(); buy()
+    for i=1,3 do f2t_bulk_buy_success(7500+75*i) end
+    equal(stopped,0); equal(#navigated,0); equal(F2T_HAULING_STATE.current_phase,"waiting_buy_cargo")
+    cargo(2); f2t_hauling_purchase_observe(); equal(#navigated,0)
+    cargo(3); f2t_hauling_purchase_observe(); f2t_hauling_purchase_observe()
+    equal(#navigated,1); equal(F2T_HAULING_STATE.current_commodity_stats.total_cost,22950)
+    equal(#sent,1); no_timer()
+end)
+
+test("partial refusal waits for its purchased cargo without trying another supplier", function()
+    reset(); buy(); f2t_bulk_buy_success(7575); trigger("buy_error_not_selling")
+    equal(stopped,0); equal(#navigated,0); equal(F2T_HAULING_STATE.current_phase,"waiting_buy_cargo")
+    cargo(1); f2t_hauling_purchase_observe()
+    equal(navigated[1],"Buyer A"); equal(#sent,1)
+    equal(F2T_HAULING_STATE.current_commodity_stats.total_cost,7575); no_timer()
+end)
+
+test("repeated buying transition preserves pending cargo settlement without replay", function()
+    reset(); buy(); for i=1,3 do f2t_bulk_buy_success(7500) end
+    f2t_hauling_transition("buying")
+    equal(F2T_HAULING_STATE.current_phase,"waiting_buy_cargo"); equal(#sent,1)
+    cargo(3); f2t_hauling_purchase_observe()
+    equal(#navigated,1); equal(stopped,0); equal(#sent,1); no_timer()
+end)
+
+test("missing post-receipt cargo has a bounded stop without duplicate purchases", function()
+    reset(); buy(); for i=1,3 do f2t_bulk_buy_success(7500) end
+    local timer=F2T_HAULING_STATE.purchase_settlement.timer
+    equal(timer.seconds,5); timers[timer]=nil; timer.callback()
+    equal(stopped,1); equal(#navigated,0); equal(#sent,1)
+    equal(F2T_HAULING_STATE.purchase_settlement,nil)
+    cargo(3); f2t_hauling_purchase_observe(); equal(#navigated,0); no_timer()
+end)
+
+test("full cargo cannot replace missing text receipts at watchdog expiry", function()
+    reset(); buy(); cargo(3); f2t_bulk_buy_success(7500)
+    equal(stopped,0); equal(#navigated,0)
+    local timer=F2T_BULK_STATE.watchdogTimerId; timers[timer]=nil; timer.callback()
+    equal(stopped,1); equal(#navigated,0); equal(#sent,1); equal(#gmcp.char.ship.cargo,3)
+end)
+
+test("resuming while counted replies are in flight never repeats the buy", function()
+    reset(); buy(); f2t_bulk_buy_success(7500)
+    F2T_HAULING_STATE.paused=true; F2T_HAULING_STATE.paused=false
+    f2t_hauling_transition("buying"); equal(#sent,1)
+    cargo(3); f2t_bulk_buy_success(7500); f2t_bulk_buy_success(7500)
+    equal(#sent,1); equal(#navigated,1); equal(stopped,0); no_timer()
+end)
+
+test("forced pause during cargo settlement records costs but holds navigation", function()
+    reset(); buy(); for i=1,3 do f2t_bulk_buy_success(7500) end
+    F2T_HAULING_STATE.paused=true; cargo(3); f2t_hauling_purchase_observe()
+    equal(F2T_HAULING_STATE.current_commodity_stats.total_cost,22500)
+    equal(#navigated,0); equal(F2T_HAULING_STATE.current_phase,"navigating_to_sell")
+    F2T_HAULING_STATE.paused=false; f2t_hauling_transition("navigating_to_sell")
+    equal(#navigated,1); equal(#sent,1); no_timer()
+end)
+
+test("deferred stamina pause occurs after receipt and cargo reconciliation", function()
+    reset(); buy(); F2T_HAULING_STATE.pause_requested=true
+    for i=1,3 do f2t_bulk_buy_success(7500) end
+    equal(F2T_HAULING_STATE.paused,false); equal(#navigated,0)
+    cargo(3); f2t_hauling_purchase_observe()
+    equal(F2T_HAULING_STATE.paused,true); equal(#navigated,0)
+    equal(F2T_HAULING_STATE.current_phase,"navigating_to_sell"); equal(#sent,1); no_timer()
+end)
+
+test("cleanup and state replacement invalidate old purchase settlement callbacks", function()
+    reset(); buy(); for i=1,3 do f2t_bulk_buy_success(7500) end
+    local timer=F2T_HAULING_STATE.purchase_settlement.timer
+    f2t_hauling_purchase_cleanup(); cargo(3); timer.callback(); f2t_hauling_purchase_observe()
+    equal(#navigated,0); equal(stopped,0); no_timer()
+    F2T_HAULING_STATE={active=true,current_commodity="Woods",current_phase="buying"}
+    timer.callback(); equal(#sent,1); equal(stopped,0)
+end)
+
+test("real parent ship event settles and handler cleanup removes the wait", function()
+    reset(); local handlers={}; local serial=0
+    function registerAnonymousEventHandler(event,callback)
+        serial=serial+1; handlers[serial]={event=event,callback=callback}; return serial
+    end
+    function killAnonymousEventHandler(id) handlers[id]=nil end
+    local id=f2t_exchange_register_handlers()
+    buy(); for i=1,3 do f2t_bulk_buy_success(7500) end
+    cargo(3)
+    for _,handler in pairs(handlers) do if handler.event=="gmcp.char.ship" then handler.callback() end end
+    equal(#navigated,1); equal(#sent,1); no_timer()
+    f2t_exchange_cleanup_handlers(id); equal(next(handlers),nil)
+    equal(F2T_HAULING_STATE.purchase_settlement,nil)
+end)
+
+test("safe-room stop invalidates settlement and still-arriving bulk callbacks immediately", function()
+    local saved_settings, saved_navigate = f2t_settings_get, f2t_map_navigate
+    function f2t_settings_get(_, name)
+        if name=="use_safe_room" then return true end
+        if name=="safe_room" then return "Safe room" end
+    end
+    local safe_trips=0
+    function f2t_map_navigate() safe_trips=safe_trips+1 end
+    local ok, err=pcall(function()
+        reset(); buy(); for i=1,3 do f2t_bulk_buy_success(7500) end
+        local settlement_timer=F2T_HAULING_STATE.purchase_settlement.timer
+        real_do_stop()
+        equal(F2T_HAULING_STATE.purchase_settlement,nil); equal(timers[settlement_timer],nil)
+        cargo(3); f2t_hauling_purchase_observe(); settlement_timer.callback()
+        equal(#navigated,0); equal(#sent,1); equal(safe_trips,1)
+
+        reset(); buy(); f2t_bulk_buy_success(7500); real_do_stop()
+        cargo(3); f2t_bulk_buy_success(7500); f2t_bulk_buy_success(7500)
+        equal(F2T_HAULING_STATE.purchase_settlement,nil)
+        equal(#navigated,0); equal(#sent,1); equal(safe_trips,2)
+    end)
+    f2t_settings_get, f2t_map_navigate = saved_settings, saved_navigate
+    if not ok then error(err) end
 end)
 
 print(string.format("RESULT %d passed, %d failed",passed,failed))
