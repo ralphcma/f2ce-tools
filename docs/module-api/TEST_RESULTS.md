@@ -1,5 +1,26 @@
 # Module API verification
 
+## 2026-09-17 Stellar/Supernova bundled-map reset
+
+Candidate `f2ce-tools-3.3.0-native-ew28.mpackage`, SHA256
+`40238f50cf13899d69b6dc3d973de587adabd19b09b61d0f16eb03c87d39f713`.
+
+The bundled whole-galaxy export no longer persists Stellar or Supernova map
+state. Cleanup removes every space and planet area owned by either system, all
+retained exits into the deleted rooms, and both system entries from the saved
+topology snapshot (while retaining the separate, valid Stellar cartel). The
+bundle changed only `config.lua` and `galaxy_brief.json` from ew27: 18 areas,
+77 rooms, and 70 inbound references were removed. The resulting bundled map
+contains 1,562 areas and 5,032 rooms.
+
+Source and reconstructed-package suites pass: 262 Lua files compile, 32 JSON
+metadata files parse, all 228 packaged script/trigger bodies match source, and
+the non-compass navigation regressions cover canonical up/down/in/out handling,
+previsited orbit recognition, vertical stubs, stale rebuilt-system edges, and
+live route repair. The reusable `scripts/clean-map-systems.ps1` also validates
+serialized counts, dangling exits, residual target rooms, and saved topology
+entries before accepting an output.
+
 ## 2026-09-16 Single-factory confirmation and workforce capture boundary
 
 Candidate `f2ce-tools-3.3.0-native-ew27.mpackage`, SHA256
